@@ -2,6 +2,8 @@
 
 Early-stage demonstration of [SmolVLA](https://huggingface.co/lerobot/smolvla_base) (Vision-Language-Action model) running on LIBERO robot arm simulation on a Mac (no NVIDIA GPU — uses Apple MPS).
 
+> **注意**：这个仅作为Architecture层面的demo，训练时用的EEG数据是随机采样的，跟动作内容毫无关联，下文中的both_fists准确率高仅为统计噪声。这个测试也完全绕过了VLM，直接在最末端的动作算法上做了调整。正确的做法是把EEG embedding投影到VLM的hidden dim，然后作为额外的token插入到SmolVLM2 transformer的输入序列中，让它和图像patch、语言token一起经过attention层。这样EEG才能在语义层面影响模型对场景的理解。
+
 ---
 
 ## SmolVLA + EEG 脑电信号融合实验
@@ -22,7 +24,7 @@ Early-stage demonstration of [SmolVLA](https://huggingface.co/lerobot/smolvla_ba
 
 - **both_feet**：受试者想象"双脚用力"，激活的是运动皮层中控制下肢的区域，与手臂抓取任务关联最弱。
 
-**both_fists表现最好**（MAE=0.323，夹爪准确率54.3%）——"双手握拳"的脑电信号在语义层面与机械臂执行抓取任务时的夹爪闭合动作最为接近。**left_fist和both_feet表现最差**，夹爪准确率只有35%左右，说明这两类脑电信号与抓取任务的语义偏差最大，注入后反而干扰了模型的判断。
+~~**both_fists表现最好**（MAE=0.323，夹爪准确率54.3%）——"双手握拳"的脑电信号在语义层面与机械臂执行抓取任务时的夹爪闭合动作最为接近。**left_fist和both_feet表现最差**，夹爪准确率只有35%左右，说明这两类脑电信号与抓取任务的语义偏差最大，注入后反而干扰了模型的判断。~~
 
 ---
 
