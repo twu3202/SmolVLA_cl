@@ -130,6 +130,14 @@ for subj_idx, subj in enumerate(range(1, n_subjects + 1), 1):
     n_ep = sum(len(x) for x in Xs_subj) if Xs_subj else 0
     print(f"  [{subj_idx:3d}/{n_subjects}] subj {subj:03d} — {n_ep} epochs", flush=True)
 
+    # Periodic intermediate save every 10 subjects so progress is never lost
+    if subj_idx % 10 == 0 and all_X:
+        partial_X = np.concatenate(all_X)
+        partial_y = np.concatenate(all_y)
+        np.savez_compressed(os.path.join(args.out, "epochs.npz"),
+                            X=partial_X, y=partial_y)
+        print(f"    [intermediate save] {len(partial_X)} epochs so far", flush=True)
+
 # ── Concatenate and save ──────────────────────────────────────────────────────
 X = np.concatenate(all_X)   # (N, 64, 320)
 y = np.concatenate(all_y)   # (N,)

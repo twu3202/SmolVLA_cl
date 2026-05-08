@@ -41,7 +41,7 @@ if LIBERO_PATH not in sys.path:
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import AutoTokenizer
 
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
@@ -51,8 +51,49 @@ from dataset_libero import LiberoDataset, collate_fn
 from eeg_encoder import EEGNet
 from train_smolvla_eeg import (
     EEGSampler, batch_actions_to_classes, batch_to_device, log_step,
+    action_to_eeg_class,
 )
 from utils import get_device
+
+
+# ── Class-balanced sample weights ────────────────────────────────────────────
+
+def compute_sample_weights(dataset: LiberoDataset, stats: dict) -> torch.Tensor:
+    """
+    For each (demo, t) sample in the dataset, compute its action class
+    (via action_to_eeg_class on the first action of the chunk) and assign
+    a sampling weight = 1 / class_count.  Returned tensor is fed to a
+    WeightedRandomSampler so each class is drawn equally often.
+
+    This is run once at startup (~1-2 min for 62k samples) by reading
+    actions directly from the underlying HDF5 files.
+    """
+    import h5py
+    a_mean = stats["action"]["mean"].numpy()
+    a_std  = stats["action"]["std"].numpy()
+
+    # Walk the dataset's flat index, opening each demo HDF5 once
+    classes = np.zeros(len(dataset), dtype=np.int64)
+    last_path = None
+    cur_actions = None
+    print("  Computing per-sample class for balanced sampling ...", flush=True)
+    for idx, (demo_idx, t) in enumerate(dataset._flat):
+        path, demo_key, _, _ = dataset._index[demo_idx]
+        if path != last_path:
+            last_path = path
+            cur_h5 = h5py.File(path, "r")
+        first = cur_h5["data"][demo_key]["actions"][t].astype(np.float32)
+        # action_to_eeg_class expects raw (un-normalized) action
+        classes[idx] = action_to_eeg_class(torch.from_numpy(first))
+
+    counts = np.bincount(classes, minlength=4).astype(np.float64)
+    print(f"  Action-class counts: L={int(counts[0])} R={int(counts[1])} "
+          f"F={int(counts[2])} Fwd={int(counts[3])}")
+
+    # Inverse-frequency weights (each class contributes equally)
+    inv = 1.0 / np.maximum(counts, 1)
+    weights = inv[classes]
+    return torch.from_numpy(weights), classes
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SUITE             = os.environ.get("SUITE", "libero_spatial")
@@ -62,14 +103,16 @@ BATCH_SIZE        = int(os.environ.get("BATCH_SIZE", "4"))
 GRAD_ACCUM        = int(os.environ.get("GRAD_ACCUM", "4"))
 SAVE_EVERY        = int(os.environ.get("SAVE_EVERY", "200"))
 SYNTHETIC_PAIRING = bool(int(os.environ.get("SYNTHETIC_PAIRING", "1")))
+CLASS_BALANCED    = bool(int(os.environ.get("CLASS_BALANCED", "0")))
+RUN_TAG           = os.environ.get("RUN_TAG", "")     # extra suffix for output dir
 EEG_DROPOUT       = float(os.environ.get("EEG_DROPOUT",
                                           "0.0" if SYNTHETIC_PAIRING else "0.5"))
 
-EEG_DATA_PATH    = "./data/eeg_physionet/epochs.npz"
+EEG_DATA_PATH    = os.environ.get("EEG_DATA_PATH", "./data/eeg_physionet/epochs.npz")
 EEG_ENCODER_PT   = "./checkpoints/eeg_encoder/encoder_only.pt"
 BASE_CHECKPOINT  = f"./checkpoints/{SUITE}/policy_final.pt"
 STATS_PATH       = f"./checkpoints/{SUITE}/dataset_stats.pt"
-OUTPUT_DIR       = f"./checkpoints/{SUITE}_eeg_token"
+OUTPUT_DIR       = f"./checkpoints/{SUITE}_eeg_token{RUN_TAG}"
 LOG_PATH         = f"{OUTPUT_DIR}/train_log.jsonl"
 
 VLM_NAME         = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
@@ -182,6 +225,7 @@ def train():
     print(f"Steps          : {STEPS}  (effective batch = {BATCH_SIZE}×{GRAD_ACCUM})")
     print(f"LR             : {LR}")
     print(f"EEG dropout    : {EEG_DROPOUT:.0%}")
+    print(f"Class-balanced : {CLASS_BALANCED}")
     print(f"VLM hidden dim : {VLM_HIDDEN_DIM}")
     print(f"Device         : {device}")
     print(f"Base ckpt      : {BASE_CHECKPOINT}")
@@ -202,9 +246,20 @@ def train():
     dataset   = LiberoDataset(suite=SUITE, chunk_size=CHUNK_SIZE,
                               tokenizer=tokenizer, stats=stats,
                               max_token_len=48, max_demos=MAX_DEMOS)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
-                        num_workers=0, collate_fn=collate_fn,
-                        drop_last=True, pin_memory=False)
+
+    if CLASS_BALANCED:
+        weights, _ = compute_sample_weights(dataset, stats)
+        # num_samples = STEPS * BATCH_SIZE * GRAD_ACCUM ensures coverage
+        n_to_draw = STEPS * BATCH_SIZE * GRAD_ACCUM
+        sampler = WeightedRandomSampler(weights, num_samples=n_to_draw, replacement=True)
+        loader = DataLoader(dataset, batch_size=BATCH_SIZE,
+                            sampler=sampler, num_workers=0,
+                            collate_fn=collate_fn, drop_last=True, pin_memory=False)
+        print(f"  Class-balanced sampling enabled (drawing {n_to_draw} samples)")
+    else:
+        loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
+                            num_workers=0, collate_fn=collate_fn,
+                            drop_last=True, pin_memory=False)
     loader_iter = iter(loader)
 
     # ── Base SmolVLA ──────────────────────────────────────────────────────────
