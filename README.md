@@ -10,7 +10,6 @@ Early-stage demonstration of [SmolVLA](https://huggingface.co/lerobot/smolvla_ba
 
 ## 阶段一：LIBERO + lerobot 基础管线
 
-### 内容
 建立从LIBERO机器人仿真环境到SmolVLA策略模型的完整数据流，并在LIBERO `libero_spatial` suite的500个示教数据上微调SmolVLA。
 
 - **数据**：LIBERO `libero_spatial` 数据集（10任务 × 50演示 × ~120步），HDF5格式
@@ -35,7 +34,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 | Trained — random VLM | 0.246 | 1.004 | 84.3% |
 | Trained — pretrained VLM | 0.255 | 0.997 | **92.0%** |
 
-### 中文解释
 
 阶段一的核心是验证"在Mac MPS上能跑通完整的VLA训练管线"。两个关键发现：
 
@@ -46,7 +44,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ## 阶段二：加入EEG数据作为第四模态
 
-### 内容
 在阶段一的SmolVLA之上添加EEG脑电信号作为新的输入modality。EEG来自PhysioNet EEGMMIDB数据集（10个受试者，64通道，160Hz，4类运动想象任务）。
 
 - **新数据**：PhysioNet 2秒EEG epochs（左拳/右拳/双拳/双脚想象）
@@ -69,7 +66,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 | both_fists | 想象双手握拳 | 0.323 | 1.381 | 54.3% |
 | both_feet | 想象双脚用力 | 0.355 | 1.561 | 34.3% |
 
-### 中文解释
 
 阶段二建立了EEG作为额外输入modality的完整管线，并测试模型在不同想象任务下的表现。但在这个阶段，**训练时EEG是随机采样的**（跟当前action完全无关），因此模型学不到任何"EEG → 动作"的对应关系。
 
@@ -81,7 +77,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ## 阶段三：确定性EEG-动作配对 + 0% Dropout 可控性测试
 
-### 内容
 为了排除"模型只是忽略EEG"的可能，强制制造确定性的EEG-动作语义配对，并把EEG dropout降到0%，让模型**必须**依赖EEG才能完成训练。
 
 - **动作 → EEG类别的强制映射**：
@@ -106,7 +101,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 **总体：1/4 通过**
 
-### 中文解释
 
 这是项目中**最重要的科学结论**之一。即使在最理想的条件下（数据100%确定性配对、强制依赖EEG、训练1000步），模型在4个方向中只学会了1个——而且唯一通过的是gripper维度（二值信号，最容易被加法注入影响）。
 
@@ -122,7 +116,6 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ## 阶段四：Representation Learning 综合分析
 
-### 内容
 不再依赖端到端训练，而是直接对EEGNet学到的表征做严格的分析，验证三件事：(1) EEG表征本身是否discriminative；(2) EEG和action空间是否对齐；(3) EEG能否预测连续的机器人动作。
 
 - **方法**：
@@ -155,7 +148,6 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 | EEG → Δxyz 回归 R²（paired） | **+0.065** | EEG 几乎不能预测连续动作 |
 | EEG → Δxyz 回归 R²（random） | −0.023 | random baseline，符合预期 |
 
-### 中文解释
 
 阶段四从 representation 层面给出了系统性的诊断：
 
