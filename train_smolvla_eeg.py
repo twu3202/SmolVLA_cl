@@ -60,18 +60,25 @@ from eeg_encoder import EEGNet
 from utils import get_device
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SUITE        = os.environ.get("SUITE", "libero_spatial")
-STEPS        = int(os.environ.get("STEPS", "1000"))
-LR           = float(os.environ.get("LR", "5e-5"))
-BATCH_SIZE   = int(os.environ.get("BATCH_SIZE", "4"))
-GRAD_ACCUM   = int(os.environ.get("GRAD_ACCUM", "4"))
-SAVE_EVERY   = int(os.environ.get("SAVE_EVERY", "200"))
-EEG_DROPOUT  = float(os.environ.get("EEG_DROPOUT", "0.5"))
+SUITE             = os.environ.get("SUITE", "libero_spatial")
+STEPS             = int(os.environ.get("STEPS", "1000"))
+LR                = float(os.environ.get("LR", "5e-5"))
+BATCH_SIZE        = int(os.environ.get("BATCH_SIZE", "4"))
+GRAD_ACCUM        = int(os.environ.get("GRAD_ACCUM", "4"))
+SAVE_EVERY        = int(os.environ.get("SAVE_EVERY", "200"))
+SYNTHETIC_PAIRING = bool(int(os.environ.get("SYNTHETIC_PAIRING", "0")))
+
+# When SYNTHETIC_PAIRING=1, force EEG dropout to 0 so the model HAS to use EEG
+DEFAULT_DROPOUT = "0.0" if SYNTHETIC_PAIRING else "0.5"
+EEG_DROPOUT     = float(os.environ.get("EEG_DROPOUT", DEFAULT_DROPOUT))
+
+# Use a separate output dir for synthetic mode so it doesn't overwrite the random run
+RUN_TAG = "_eeg_synth" if SYNTHETIC_PAIRING else "_eeg"
 
 EEG_DATA_PATH   = "./data/eeg_physionet/epochs.npz"
 EEG_ENCODER_PT  = "./checkpoints/eeg_encoder/encoder_only.pt"
 BASE_CHECKPOINT = f"./checkpoints/{SUITE}/policy_final.pt"
-OUTPUT_DIR      = f"./checkpoints/{SUITE}_eeg"
+OUTPUT_DIR      = f"./checkpoints/{SUITE}{RUN_TAG}"
 LOG_PATH        = f"{OUTPUT_DIR}/train_log.jsonl"
 STATS_PATH      = f"./checkpoints/{SUITE}/dataset_stats.pt"
 
@@ -156,13 +163,63 @@ class EEGSampler:
 
     def sample(self, batch_size: int, device: str,
                cls: int | None = None) -> torch.Tensor:
-        """Return (B, 1, 64, 320) float32 on device."""
+        """Return (B, 1, 64, 320) float32 on device.
+        If cls is given, all returned epochs come from that single class."""
         if cls is not None and cls in self.class_indices:
             pool = self.class_indices[cls]
         else:
             pool = torch.arange(len(self.X))
         idx = pool[torch.randint(len(pool), (batch_size,))]
         return self.X[idx].unsqueeze(1).to(device)   # (B, 1, C, T)
+
+    def sample_per_class(self, classes: list[int], device: str) -> torch.Tensor:
+        """Return (B, 1, 64, 320) where element i comes from class[i]."""
+        out = []
+        for cls in classes:
+            if cls is not None and cls in self.class_indices:
+                pool = self.class_indices[cls]
+            else:
+                pool = torch.arange(len(self.X))
+            idx = pool[torch.randint(len(pool), (1,))].item()
+            out.append(self.X[idx])
+        return torch.stack(out).unsqueeze(1).to(device)
+
+
+# ── Action → EEG class mapping (synthetic pairing) ────────────────────────────
+
+def action_to_eeg_class(action_raw: torch.Tensor) -> int:
+    """
+    Deterministic mapping from a 7-D un-normalized action vector → EEG class.
+
+    Class layout:
+      0 — left_fist   : dominant -x motion (delta_x < 0, no gripper close)
+      1 — right_fist  : dominant +x motion (delta_x > 0, no gripper close)
+      2 — both_fists  : gripper closing OR dominant -y motion
+      3 — both_feet   : dominant +y motion (forward)
+    """
+    dx, dy, _, _, _, _, gripper = action_raw.tolist()
+
+    # Gripper close has highest priority — most distinctive intent
+    if gripper < -0.3:
+        return 2
+
+    # Dominant translation axis
+    if abs(dx) >= abs(dy):
+        return 0 if dx < 0 else 1
+    else:
+        return 3 if dy > 0 else 2
+
+
+def batch_actions_to_classes(action_batch: torch.Tensor,
+                             a_mean: torch.Tensor,
+                             a_std:  torch.Tensor) -> list[int]:
+    """
+    action_batch: (B, chunk_size, 7) — normalized actions from the dataset
+    Returns list of B class indices, computed from the FIRST action of each chunk.
+    """
+    first   = action_batch[:, 0, :]                       # (B, 7) normalized
+    raw     = first * a_std + a_mean                      # de-normalize
+    return [action_to_eeg_class(raw[i]) for i in range(raw.shape[0])]
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -182,7 +239,9 @@ def train():
     device = get_device()
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    mode_str = "SYNTHETIC PAIRING (controllability test)" if SYNTHETIC_PAIRING else "RANDOM EEG (pipeline test)"
     print(f"=== SmolVLA + EEG Fine-Tuning ===")
+    print(f"Mode           : {mode_str}")
     print(f"Suite          : {SUITE}")
     print(f"Steps          : {STEPS}  (effective batch = {BATCH_SIZE}×{GRAD_ACCUM}={BATCH_SIZE*GRAD_ACCUM})")
     print(f"LR             : {LR}")
@@ -259,6 +318,13 @@ def train():
     print("\n[4/4] Building EEG sampler ...")
     eeg_sampler = EEGSampler(EEG_DATA_PATH)
 
+    # Pre-compute action denorm constants for synthetic pairing
+    a_mean = stats["action"]["mean"].to(device)
+    a_std  = stats["action"]["std"].to(device)
+
+    # Stats for class distribution diagnostic
+    class_count = {0: 0, 1: 0, 2: 0, 3: 0}
+
     # ── Optimizer ─────────────────────────────────────────────────────────────
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=LR, betas=(0.9, 0.95),
@@ -280,8 +346,16 @@ def train():
             batch = next(loader_iter)
         batch = batch_to_device(batch, device)
 
-        # Sample EEG epochs (random — no ground-truth pairing)
-        eeg = eeg_sampler.sample(BATCH_SIZE, device)
+        # Sample EEG epochs
+        if SYNTHETIC_PAIRING:
+            # Deterministic pairing: class chosen from each sample's first action
+            classes = batch_actions_to_classes(batch["action"], a_mean, a_std)
+            for c in classes:
+                class_count[c] = class_count.get(c, 0) + 1
+            eeg = eeg_sampler.sample_per_class(classes, device)
+        else:
+            # Random — no semantic correspondence
+            eeg = eeg_sampler.sample(BATCH_SIZE, device)
 
         # Forward
         model.train()
@@ -305,9 +379,14 @@ def train():
             lr_now  = optimizer.param_groups[0]["lr"]
             avg_loss = np.mean(loss_window)
             sps      = (step + 1) / max(elapsed, 1e-6)
+            extra = ""
+            if SYNTHETIC_PAIRING and sum(class_count.values()) > 0:
+                tot = sum(class_count.values())
+                pct = {k: v/tot*100 for k,v in class_count.items()}
+                extra = f" | classes(L/R/F/Fwd)={pct[0]:.0f}/{pct[1]:.0f}/{pct[2]:.0f}/{pct[3]:.0f}%"
             print(f"  step {step:4d}/{STEPS} | loss={avg_loss:.4f} | "
                   f"lr={lr_now:.2e} | {sps:.1f} steps/s | "
-                  f"ETA {(STEPS-step-1)/max(sps,1e-6)/60:.1f}min")
+                  f"ETA {(STEPS-step-1)/max(sps,1e-6)/60:.1f}min{extra}")
             log_step(LOG_PATH, {
                 "step": step, "loss": avg_loss, "lr": lr_now, "elapsed": elapsed,
             })
