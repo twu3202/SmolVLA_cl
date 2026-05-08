@@ -1,0 +1,330 @@
+#!/usr/bin/env python
+"""
+Stage 5: Token-level VLM injection — the architectural fix.
+
+Instead of adding EEG to robot state at the very end (Stages 2/3), this projects
+the EEG embedding into SmolVLM2's hidden dimension (960) and injects it as a
+TOKEN inside the language input sequence. The VLM's transformer attends to it
+alongside image patches and language tokens.
+
+Mechanism:
+  EEG (64ch×320) → EEGNet → 64-dim embedding
+                          → Linear → GELU → Linear → LayerNorm → 960-dim token
+                          → replaces position 0 of language embeddings via a
+                            forward hook on vlm.get_input_embeddings()
+                          → flows through 16 VLM transformer layers via attention
+                          → emerges as part of the context tokens that the
+                            action expert reads
+
+This requires gradients to flow through the (frozen) VLM back to the projection
+layer — increasing memory ~3-5× vs additive injection but still fitting on M5.
+
+We start from the synthetic-pairing recipe (deterministic action→EEG mapping,
+0% dropout) so the controllability test is directly comparable to Stage 3.
+
+Usage:
+    SUITE=libero_spatial PYTHONPATH=/Users/r/LIBERO \
+        /opt/anaconda3/envs/lerobot/bin/python -u train_smolvla_eeg_token.py
+"""
+
+import json
+import os
+import sys
+import time
+import warnings
+warnings.filterwarnings("ignore")
+
+LIBERO_PATH = "/Users/r/LIBERO"
+if LIBERO_PATH not in sys.path:
+    sys.path.insert(0, LIBERO_PATH)
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
+
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+from libero_smolvla_config import make_libero_smolvla_config
+from dataset_libero import LiberoDataset, collate_fn
+from eeg_encoder import EEGNet
+from train_smolvla_eeg import (
+    EEGSampler, batch_actions_to_classes, batch_to_device, log_step,
+)
+from utils import get_device
+
+# ── Config ────────────────────────────────────────────────────────────────────
+SUITE             = os.environ.get("SUITE", "libero_spatial")
+STEPS             = int(os.environ.get("STEPS", "1000"))
+LR                = float(os.environ.get("LR", "5e-5"))
+BATCH_SIZE        = int(os.environ.get("BATCH_SIZE", "4"))
+GRAD_ACCUM        = int(os.environ.get("GRAD_ACCUM", "4"))
+SAVE_EVERY        = int(os.environ.get("SAVE_EVERY", "200"))
+SYNTHETIC_PAIRING = bool(int(os.environ.get("SYNTHETIC_PAIRING", "1")))
+EEG_DROPOUT       = float(os.environ.get("EEG_DROPOUT",
+                                          "0.0" if SYNTHETIC_PAIRING else "0.5"))
+
+EEG_DATA_PATH    = "./data/eeg_physionet/epochs.npz"
+EEG_ENCODER_PT   = "./checkpoints/eeg_encoder/encoder_only.pt"
+BASE_CHECKPOINT  = f"./checkpoints/{SUITE}/policy_final.pt"
+STATS_PATH       = f"./checkpoints/{SUITE}/dataset_stats.pt"
+OUTPUT_DIR       = f"./checkpoints/{SUITE}_eeg_token"
+LOG_PATH         = f"{OUTPUT_DIR}/train_log.jsonl"
+
+VLM_NAME         = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+VLM_HIDDEN_DIM   = 960          # SmolVLM2-500M text hidden size
+EEG_EMBED_DIM    = 64           # EEGNet output
+CHUNK_SIZE       = 50
+MAX_GRAD_NORM    = 10.0
+MAX_DEMOS        = None
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── Token-level VLM injection wrapper ────────────────────────────────────────
+
+class SmolVLATokenLevelEEG(nn.Module):
+    """
+    Inject EEG into the VLM's input token stream by replacing position 0 of the
+    text embeddings via a forward hook on the embedding layer.
+
+    The VLM is frozen; gradients flow through its activations back to eeg_proj.
+    """
+
+    def __init__(
+        self,
+        base_policy: SmolVLAPolicy,
+        eeg_encoder: EEGNet,
+        vlm_hidden_dim: int = VLM_HIDDEN_DIM,
+        eeg_dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.base_policy = base_policy
+        self.eeg_encoder = eeg_encoder
+        self.vlm_hidden_dim = vlm_hidden_dim
+        self.eeg_dropout = eeg_dropout
+
+        # EEG embedding (64) → VLM hidden (960)
+        self.eeg_proj = nn.Sequential(
+            nn.Linear(EEG_EMBED_DIM, 256),
+            nn.GELU(),
+            nn.Linear(256, vlm_hidden_dim),
+            nn.LayerNorm(vlm_hidden_dim),
+        )
+
+        # Per-forward state — set before forward, read by the hook
+        self._current_eeg_token: torch.Tensor | None = None
+
+        # Register hook on the VLM's text embedding layer
+        embed_layer = base_policy.model.vlm_with_expert.vlm.get_input_embeddings()
+        self._hook = embed_layer.register_forward_hook(self._inject_hook)
+
+    def _inject_hook(self, module, inputs, output):
+        """
+        After token embedding lookup, replace position 0 with the EEG-derived
+        token for every sample in the batch. The output shape is (B, T, H).
+        """
+        if self._current_eeg_token is None:
+            return output
+        # Only inject when output looks like a language sequence
+        # (B matches our EEG batch and T >= 1)
+        if output.dim() != 3 or output.shape[0] != self._current_eeg_token.shape[0]:
+            return output
+        out = output.clone()
+        out[:, 0, :] = self._current_eeg_token.to(out.dtype)
+        return out
+
+    def _compute_eeg_token(self, eeg: torch.Tensor) -> torch.Tensor:
+        """EEG raw → projected 960-dim token, with optional dropout."""
+        emb   = self.eeg_encoder.encode(eeg)        # (B, 64)
+        token = self.eeg_proj(emb)                  # (B, 960)
+        if self.training and self.eeg_dropout > 0:
+            mask = (torch.rand(len(token), 1, device=token.device)
+                    > self.eeg_dropout).float()
+            token = token * mask
+        return token
+
+    def forward(self, batch: dict, eeg: torch.Tensor | None = None):
+        if eeg is not None:
+            self._current_eeg_token = self._compute_eeg_token(eeg)
+        else:
+            self._current_eeg_token = None
+        try:
+            return self.base_policy.forward(batch)
+        finally:
+            self._current_eeg_token = None
+
+    def select_action(self, batch: dict, eeg: torch.Tensor | None = None):
+        if eeg is not None:
+            self._current_eeg_token = self._compute_eeg_token(eeg)
+        else:
+            self._current_eeg_token = None
+        try:
+            return self.base_policy.select_action(batch)
+        finally:
+            self._current_eeg_token = None
+
+    def reset(self):
+        self.base_policy.reset()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def train():
+    device = get_device()
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    mode_str = ("SYNTHETIC PAIRING (controllability)" if SYNTHETIC_PAIRING
+                else "RANDOM EEG (pipeline)")
+    print(f"=== SmolVLA + EEG TOKEN-LEVEL VLM Injection ===")
+    print(f"Mode           : {mode_str}")
+    print(f"Suite          : {SUITE}")
+    print(f"Steps          : {STEPS}  (effective batch = {BATCH_SIZE}×{GRAD_ACCUM})")
+    print(f"LR             : {LR}")
+    print(f"EEG dropout    : {EEG_DROPOUT:.0%}")
+    print(f"VLM hidden dim : {VLM_HIDDEN_DIM}")
+    print(f"Device         : {device}")
+    print(f"Base ckpt      : {BASE_CHECKPOINT}")
+    print(f"Output         : {OUTPUT_DIR}")
+
+    for path, name in [(BASE_CHECKPOINT,  "SmolVLA checkpoint"),
+                       (EEG_ENCODER_PT,   "EEG encoder"),
+                       (STATS_PATH,       "Dataset stats"),
+                       (EEG_DATA_PATH,    "EEG epochs")]:
+        if not os.path.exists(path):
+            print(f"\nMissing {name}: {path}")
+            raise SystemExit(1)
+
+    # ── Data ──────────────────────────────────────────────────────────────────
+    print("\n[1/4] Building dataloader ...")
+    stats     = torch.load(STATS_PATH, map_location="cpu", weights_only=False)
+    tokenizer = AutoTokenizer.from_pretrained(VLM_NAME)
+    dataset   = LiberoDataset(suite=SUITE, chunk_size=CHUNK_SIZE,
+                              tokenizer=tokenizer, stats=stats,
+                              max_token_len=48, max_demos=MAX_DEMOS)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
+                        num_workers=0, collate_fn=collate_fn,
+                        drop_last=True, pin_memory=False)
+    loader_iter = iter(loader)
+
+    # ── Base SmolVLA ──────────────────────────────────────────────────────────
+    print("\n[2/4] Loading base SmolVLA ...")
+    cfg = make_libero_smolvla_config(device)
+    cfg.load_vlm_weights = False
+    base_policy = SmolVLAPolicy(cfg).to(device)
+    state_dict  = torch.load(BASE_CHECKPOINT, map_location=device, weights_only=False)
+    if isinstance(state_dict, dict) and "policy_state" in state_dict:
+        state_dict = state_dict["policy_state"]
+    base_policy.load_state_dict(state_dict)
+    print("  SmolVLA loaded OK")
+
+    # ── EEG encoder (frozen) ─────────────────────────────────────────────────
+    print("\n[3/4] Loading EEG encoder ...")
+    enc_ckpt = torch.load(EEG_ENCODER_PT, map_location="cpu", weights_only=False)
+    eeg_enc  = EEGNet(n_channels=64, n_timepoints=320,
+                      n_classes=4, embed_dim=EEG_EMBED_DIM)
+    eeg_enc.load_state_dict(enc_ckpt["backbone_state"], strict=False)
+    eeg_enc = eeg_enc.to(device)
+    for p in eeg_enc.parameters():
+        p.requires_grad = False
+    print(f"  EEG encoder val_acc={enc_ckpt.get('best_val_acc','?'):.1f}%")
+
+    # ── Combined model ────────────────────────────────────────────────────────
+    print("\n[4/4] Building combined model + sampler ...")
+    model = SmolVLATokenLevelEEG(base_policy, eeg_enc,
+                                 vlm_hidden_dim=VLM_HIDDEN_DIM,
+                                 eeg_dropout=EEG_DROPOUT).to(device)
+    model.train()
+
+    eeg_proj_params  = sum(p.numel() for p in model.eeg_proj.parameters())
+    trainable_total  = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  EEG projection  : {eeg_proj_params/1e3:.1f}K new params")
+    print(f"  Total trainable : {trainable_total/1e6:.2f}M")
+
+    eeg_sampler = EEGSampler(EEG_DATA_PATH)
+
+    a_mean = stats["action"]["mean"].to(device)
+    a_std  = stats["action"]["std"].to(device)
+    class_count = {0: 0, 1: 0, 2: 0, 3: 0}
+
+    # ── Optimizer ─────────────────────────────────────────────────────────────
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=LR,
+                                  betas=(0.9, 0.95), weight_decay=1e-10)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=STEPS)
+
+    # ── Training loop ──────────────────────────────────────────────────────────
+    print(f"\nFine-tuning for {STEPS} steps ...")
+    t_start, loss_window = time.time(), []
+    optimizer.zero_grad()
+
+    for step in range(STEPS):
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            loader_iter = iter(loader)
+            batch = next(loader_iter)
+        batch = batch_to_device(batch, device)
+
+        if SYNTHETIC_PAIRING:
+            classes = batch_actions_to_classes(batch["action"], a_mean, a_std)
+            for c in classes:
+                class_count[c] = class_count.get(c, 0) + 1
+            eeg = eeg_sampler.sample_per_class(classes, device)
+        else:
+            eeg = eeg_sampler.sample(BATCH_SIZE, device)
+
+        loss, loss_dict = model(batch, eeg=eeg)
+        loss = loss / GRAD_ACCUM
+        loss.backward()
+
+        loss_window.append(loss_dict["loss"])
+        if len(loss_window) > 50:
+            loss_window.pop(0)
+
+        if (step + 1) % GRAD_ACCUM == 0:
+            torch.nn.utils.clip_grad_norm_(trainable_params, MAX_GRAD_NORM)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+
+        if step % 20 == 0 or step == STEPS - 1:
+            elapsed = time.time() - t_start
+            sps = (step + 1) / max(elapsed, 1e-6)
+            extra = ""
+            if SYNTHETIC_PAIRING and sum(class_count.values()) > 0:
+                tot = sum(class_count.values())
+                pct = {k: v/tot*100 for k,v in class_count.items()}
+                extra = f" | classes(L/R/F/Fwd)={pct[0]:.0f}/{pct[1]:.0f}/{pct[2]:.0f}/{pct[3]:.0f}%"
+            print(f"  step {step:4d}/{STEPS} | loss={np.mean(loss_window):.4f} | "
+                  f"lr={optimizer.param_groups[0]['lr']:.2e} | {sps:.2f} steps/s | "
+                  f"ETA {(STEPS-step-1)/max(sps,1e-6)/60:.1f}min{extra}",
+                  flush=True)
+            log_step(LOG_PATH, {
+                "step": step, "loss": float(np.mean(loss_window)),
+                "lr": float(optimizer.param_groups[0]["lr"]),
+                "elapsed": elapsed,
+            })
+
+        if (step + 1) % SAVE_EVERY == 0 or step == STEPS - 1:
+            ckpt = os.path.join(OUTPUT_DIR, f"step_{step+1:06d}.pt")
+            torch.save({
+                "step":             step + 1,
+                "eeg_proj_state":   model.eeg_proj.state_dict(),
+                "policy_state":     base_policy.state_dict(),
+                "optimizer_state":  optimizer.state_dict(),
+                "vlm_hidden_dim":   VLM_HIDDEN_DIM,
+            }, ckpt)
+            print(f"  Checkpoint saved: {ckpt}", flush=True)
+
+    elapsed_total = time.time() - t_start
+    print(f"\n=== Token-level VLM injection training complete ===")
+    print(f"  Time       : {elapsed_total/60:.1f} min")
+    print(f"  Final loss : {np.mean(loss_window):.4f}")
+    print(f"  Output     : {OUTPUT_DIR}")
+    print(f"\nNext: PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python "
+          f"eval_token_eeg.py")
+
+
+if __name__ == "__main__":
+    train()
