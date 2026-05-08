@@ -67,102 +67,198 @@ EEG信号扮演的是**"人类意图的隐式调节器"**，而非直接的控�
 
 ## What this shows
 
+**Three progressive stages**, each building on the last:
+
+### Stage 1 — Environment & baseline demos
+
 | File | What it does |
 |------|-------------|
 | `quick_test.py` | Sanity check — verifies all imports and tensor shapes (~15s) |
-| `demo_libero_env.py` | LIBERO env via lerobot's `LiberoEnv` wrapper, random policy, saves frames |
-| `demo_smolvla_libero.py` | **Main demo** — LIBERO-configured SmolVLA (7-DOF, 2 cameras), random-init expert |
-| `demo_smolvla_base_libero.py` | Loads pretrained `lerobot/smolvla_base` (SO100) adapted to LIBERO observations |
+| `demo_libero_env.py` | LIBERO sim with random policy, saves camera frames |
+| `demo_smolvla_libero.py` | SmolVLA on LIBERO with randomly-initialised action expert |
+| `demo_smolvla_base_libero.py` | Pretrained `lerobot/smolvla_base` (SO100) cross-embodiment test on LIBERO |
 | `libero_smolvla_config.py` | LIBERO-specific `SmolVLAConfig` (14-dim state, 7-dim action, 2 cameras) |
-| `utils.py` | Shared helpers: `obs_to_policy_batch`, `dummy_dataset_stats`, `save_episode_frames` |
+| `utils.py` | Shared helpers: `obs_to_policy_batch`, normalization, frame saving |
+
+### Stage 2 — Fine-tuning on LIBERO demonstrations
+
+| File | What it does |
+|------|-------------|
+| `dataset_libero.py` | PyTorch Dataset over LIBERO HDF5 demos; computes normalization stats |
+| `train_smolvla_libero.py` | Fine-tunes action expert on LIBERO spatial (2000 steps, ~38 min on M5) |
+| `load_trained.py` | Helper to load any saved checkpoint for evaluation or inference |
+| `eval_openloop.py` | Open-loop action prediction accuracy vs ground-truth demos |
+| `plot_training.py` | Loss curve + LR schedule from `train_log.jsonl` |
+| `plot_eval.py` | Multi-panel comparison plot: random / trained (no VLM) / trained (pretrained VLM) |
+
+Two training runs were completed:
+- **Random VLM** (`LOAD_VLM=0`): frozen random backbone, expert trained from scratch — final loss 0.878
+- **Pretrained VLM** (`LOAD_VLM=1`): frozen SmolVLM2-500M backbone — final loss 0.776
+
+Open-loop evaluation results (`libero_spatial`, 3 demos × 10 tasks):
+
+| Model | MAE ↓ | L2 ↓ | Gripper ↑ |
+|---|---|---|---|
+| Random weights | 0.931 | 2.989 | 59.7% |
+| Trained — random VLM | 0.246 | 1.004 | 84.3% |
+| Trained — pretrained VLM | 0.255 | 0.997 | 92.0% |
+
+### Stage 3 — EEG as an additional input modality
+
+| File | What it does |
+|------|-------------|
+| `download_eeg_data.py` | Downloads PhysioNet EEGMMIDB via MNE; extracts 2s bandpass-filtered epochs |
+| `eeg_encoder.py` | EEGNet: 585K-param depthwise-separable CNN → 64-dim embedding |
+| `train_eeg_encoder.py` | Pretrains EEGNet on 4-class motor imagery (left fist / right fist / both fists / both feet) |
+| `train_smolvla_eeg.py` | `SmolVLAWithEEG` wrapper: injects EEG embedding additively into robot state |
+| `eval_openloop_eeg.py` | Evaluates all 5 EEG conditions; produces per-condition MAE / L2 / gripper plot |
+
+---
 
 ## Environment setup
 
-Python 3.12 with both `lerobot` (from source) and `libero` (via PYTHONPATH):
+Python 3.12 with `lerobot` (from source) and `libero` (via PYTHONPATH), running on Apple MPS:
 
 ```bash
-# lerobot installed from /Users/r/lerobot in the `lerobot` conda env
 conda env list   # should show: lerobot, libero
 
-# Run any script with:
+# All scripts run with:
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python <script.py>
+
+# Additional packages needed for EEG pipeline:
+pip install mne moabb scikit-learn pymatreader
 ```
+
+---
 
 ## Quickstart
 
 ```bash
 cd /Users/r/Projects/SmolVLA_cl
 
-# 1. Verify setup (no model download needed, ~15s)
+# ── Stage 1: environment check ────────────────────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python quick_test.py
-
-# 2. LIBERO env sanity check with random actions
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python demo_libero_env.py
 
-# 3. Main demo: SmolVLA pipeline on LIBERO (randomly-init action expert)
-#    Downloads SmolVLM2-500M backbone (~1GB) on first run
-PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python demo_smolvla_libero.py
+# ── Stage 2: train & evaluate ─────────────────────────────────────────────────
+# Fine-tune action expert (2000 steps, ~38 min on M5 MPS)
+PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
 
-# 4. Pretrained smolvla_base on LIBERO observations (cross-embodiment test)
-#    Downloads lerobot/smolvla_base (~1GB) on first run
-PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python demo_smolvla_base_libero.py
+# With pretrained VLM backbone (saves to checkpoints/libero_spatial_vlm/)
+LOAD_VLM=1 RUN_NAME=libero_spatial_vlm \
+    PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
 
-# Run a different LIBERO suite/task
-SUITE=libero_object TASK_ID=2 STEPS=30 PYTHONPATH=/Users/r/LIBERO \
-    /opt/anaconda3/envs/lerobot/bin/python demo_smolvla_libero.py
+# Open-loop evaluation
+MODEL=trained  PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop.py
+MODEL=trained_vlm CHECKPOINT_DIR=./checkpoints/libero_spatial_vlm MODEL_TAG=trained_vlm \
+    PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop.py
+
+# Comparison plot (requires both eval results)
+/opt/anaconda3/envs/lerobot/bin/python plot_eval.py
+
+# ── Stage 3: EEG pipeline ─────────────────────────────────────────────────────
+# Download PhysioNet EEG data (10 subjects, ~1 min)
+/opt/anaconda3/envs/lerobot/bin/python download_eeg_data.py --subjects 10
+
+# Pretrain EEGNet encoder (~2 min on M5 MPS)
+/opt/anaconda3/envs/lerobot/bin/python train_eeg_encoder.py
+
+# Fine-tune SmolVLA+EEG (1000 steps, ~25 min on M5 MPS)
+PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg.py
+
+# Evaluate across all EEG conditions
+PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop_eeg.py
 ```
 
-## Performance on M5 (MPS)
+---
 
-SmolVLA uses **action chunking**: one VLM call generates 50 actions, which are executed sequentially.
+## Performance on M5 MPS
 
-| Phase | Latency (random weights) |
-|-------|--------------------------|
-| First inference (chunk of 50) | ~5–6 s |
-| Steps 1–49 (pop from queue) | ~1 ms |
-| Effective throughput | ~9 actions/s |
+SmolVLA uses **action chunking**: one VLM forward pass generates 50 actions, executed one per step.
 
-With the full VLM backbone loaded (SmolVLM2-500M), expect ~8–15s per chunk on MPS.
+| Phase | Time |
+|---|---|
+| First inference — chunk of 50 (pretrained VLM) | ~8–12 s |
+| Steps 1–49 — pop from queue | ~1 ms |
+| Training step (action expert only, MPS) | ~0.85 s/step |
+| EEG encoder inference (EEGNet, MPS) | < 1 ms |
 
-## LIBERO feature layout
+Full training runs completed on M5 MPS:
+
+| Run | Steps | Time |
+|---|---|---|
+| SmolVLA, random VLM | 2000 | 38.4 min |
+| SmolVLA, pretrained VLM | 2000 | 27.3 min |
+| SmolVLA+EEG fine-tune | 1000 | 24.6 min |
+
+---
+
+## Feature layout
+
+### SmolVLA (Stages 1 & 2)
 
 ```
-observation.images.image    (1, 3, 256, 256)  ← agentview camera
-observation.images.image2   (1, 3, 256, 256)  ← wrist camera
-observation.state           (1, 14)           ← eef_pos(3) + eef_quat(4) + joint_pos(7)
-observation.language.tokens (1, 48)           ← tokenized task description
-action                      (7,)              ← delta_xyz(3) + delta_rpy(3) + gripper(1)
+observation.images.image      (1, 3, 128, 128)  ← agentview camera
+observation.images.image2     (1, 3, 128, 128)  ← wrist camera
+observation.state             (1, 14)           ← eef_pos(3) + eef_quat(4) + joint_pos(7)
+observation.language.tokens   (1, 48)           ← tokenized task description
+action output                 (50, 7)           ← chunk: delta_xyz(3)+delta_rpy(3)+gripper(1)
 ```
 
-## Next steps: fine-tuning on LIBERO data
+### SmolVLA+EEG (Stage 3)
 
-```bash
-# Download LIBERO demonstration dataset (from HuggingFace)
-# Then train SmolVLA with LIBERO config:
-PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python -m lerobot.scripts.train \
-    --policy.type=smolvla \
-    --dataset.repo_id=<user>/libero_spatial_lerobot \
-    --policy.device=mps \
-    --batch_size=4 \
-    --steps=10000
 ```
+observation.images.image      (1, 3, 128, 128)  ← agentview camera
+observation.images.image2     (1, 3, 128, 128)  ← wrist camera
+observation.state             (1, 14)           ← robot state (normalized)
+observation.language.tokens   (1, 48)           ← tokenized task description
+observation.eeg               (1, 1, 64, 320)   ← 64-ch × 2s EEG @ 160 Hz  ← NEW
+action output                 (50, 7)           ← same as above
+```
+
+---
 
 ## Architecture
 
+### SmolVLA (Stages 1 & 2)
+
 ```
 LIBERO sim (robosuite/MuJoCo)
-      │ OffScreenRenderEnv
+      │
+      ▼ agentview + wrist frames, joint states
+obs_to_policy_batch()   ← normalize, tokenize task language
+      │
       ▼
-lerobot LiberoEnv (gymnasium wrapper)
-      │ obs = {pixels: {image, image2}, robot_state: {eef, joints, gripper}}
+SmolVLAPolicy
+  ├─ SmolVLM2-500M backbone  (frozen during fine-tuning)
+  │    └─ vision encoder + language transformer → context tokens
+  └─ Flow-matching action expert  (trained, ~100M params)
+       └─ denoises noise → 50-action chunk over 10 diffusion steps
+      │
       ▼
-obs_to_policy_batch()
-      │ normalize images [0,1], stack state, tokenize task
-      ▼
-SmolVLAPolicy.select_action(batch)
-      │ SmolVLM2-500M VLM backbone (vision + language encoding)
-      │ Flow-matching action expert (generates 50-action chunk)
-      │ Pops one action from queue per step
-      ▼
-env.step(action)  ← 7-DOF delta control
+env.step(action[0])   ← 7-DOF delta control, pop next from chunk
 ```
+
+### SmolVLA+EEG (Stage 3)
+
+```
+EEG headset (64 ch, 160 Hz)
+      │ 2-second window
+      ▼
+EEGNet encoder  (pretrained on PhysioNet MI, frozen, 585K params)
+      │ 64-dim motor-imagery embedding
+      ▼
+Linear projection  (64 → 14, trainable, 900 params)
+      │
+      + ──────────────────────────────────┐
+      │                                   │
+robot state (14-dim, normalized)   ← added together
+      │
+      ▼
+SmolVLAPolicy  (same as above, action expert continues training)
+      │
+      ▼
+50-action chunk → env.step()
+```
+
+The EEG embedding is **added** to the robot state vector before it enters SmolVLA's state projection layer, allowing the brain signal to modulate the effective perceived state without changing any model weight shapes or requiring surgery on the VLM internals.
