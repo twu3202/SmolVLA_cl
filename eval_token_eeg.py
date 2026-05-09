@@ -43,9 +43,13 @@ MAX_DEMOS     = int(os.environ.get("MAX_DEMOS", "5"))
 MAX_STEPS     = int(os.environ.get("MAX_STEPS", "30"))
 EEG_CKPT      = os.environ.get("EEG_CKPT",
     f"./checkpoints/{SUITE}_eeg_token/step_001000.pt")
+ENCODER_ARCH  = os.environ.get("ENCODER_ARCH", "eegnet")  # "eegnet" | "atcnet"
 DATASET_DIR   = f"/Users/r/LIBERO/libero/datasets/{SUITE}"
 EEG_DATA_PATH = "./data/eeg_physionet/epochs.npz"
-EEG_ENC_PT    = "./checkpoints/eeg_encoder/encoder_only.pt"
+EEG_ENC_PT    = os.environ.get("EEG_ENC_PT",
+    "./checkpoints/eeg_encoder_atcnet/encoder_only.pt"
+    if ENCODER_ARCH == "atcnet"
+    else "./checkpoints/eeg_encoder/encoder_only.pt")
 STATS_PATH    = f"./checkpoints/{SUITE}/dataset_stats.pt"
 OUTPUT_DIR    = "./eval_output"
 
@@ -141,7 +145,11 @@ def main():
     cfg.load_vlm_weights = False
     base_policy = SmolVLAPolicy(cfg).to(device)
 
-    eeg_enc = EEGNet(n_channels=64, n_timepoints=320, n_classes=4, embed_dim=64)
+    if ENCODER_ARCH == "atcnet":
+        from eeg_encoder_atcnet import ATCNet
+        eeg_enc = ATCNet(n_channels=64, n_timepoints=320, n_classes=4, embed_dim=64)
+    else:
+        eeg_enc = EEGNet(n_channels=64, n_timepoints=320, n_classes=4, embed_dim=64)
     eeg_enc.load_state_dict(
         torch.load(EEG_ENC_PT, map_location="cpu",
                    weights_only=False)["backbone_state"], strict=False)

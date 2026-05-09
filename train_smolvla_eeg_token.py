@@ -104,12 +104,18 @@ GRAD_ACCUM        = int(os.environ.get("GRAD_ACCUM", "4"))
 SAVE_EVERY        = int(os.environ.get("SAVE_EVERY", "200"))
 SYNTHETIC_PAIRING = bool(int(os.environ.get("SYNTHETIC_PAIRING", "1")))
 CLASS_BALANCED    = bool(int(os.environ.get("CLASS_BALANCED", "0")))
+AUX_LOSS_WEIGHT   = float(os.environ.get("AUX_LOSS_WEIGHT", "0.0"))   # 0 = disabled
+ENCODER_ARCH      = os.environ.get("ENCODER_ARCH", "eegnet")   # "eegnet" | "atcnet"
+ENCODER_CKPT      = os.environ.get("ENCODER_CKPT", "")        # override path
 RUN_TAG           = os.environ.get("RUN_TAG", "")     # extra suffix for output dir
 EEG_DROPOUT       = float(os.environ.get("EEG_DROPOUT",
                                           "0.0" if SYNTHETIC_PAIRING else "0.5"))
 
 EEG_DATA_PATH    = os.environ.get("EEG_DATA_PATH", "./data/eeg_physionet/epochs.npz")
-EEG_ENCODER_PT   = "./checkpoints/eeg_encoder/encoder_only.pt"
+DEFAULT_ENC_PT   = ("./checkpoints/eeg_encoder_atcnet/encoder_only.pt"
+                   if ENCODER_ARCH == "atcnet"
+                   else "./checkpoints/eeg_encoder/encoder_only.pt")
+EEG_ENCODER_PT   = ENCODER_CKPT or DEFAULT_ENC_PT
 BASE_CHECKPOINT  = f"./checkpoints/{SUITE}/policy_final.pt"
 STATS_PATH       = f"./checkpoints/{SUITE}/dataset_stats.pt"
 OUTPUT_DIR       = f"./checkpoints/{SUITE}_eeg_token{RUN_TAG}"
@@ -137,9 +143,10 @@ class SmolVLATokenLevelEEG(nn.Module):
     def __init__(
         self,
         base_policy: SmolVLAPolicy,
-        eeg_encoder: EEGNet,
+        eeg_encoder,                          # EEGNet or ATCNet (same API)
         vlm_hidden_dim: int = VLM_HIDDEN_DIM,
         eeg_dropout: float = 0.0,
+        n_aux_classes: int = 4,
     ):
         super().__init__()
         self.base_policy = base_policy
@@ -154,6 +161,11 @@ class SmolVLATokenLevelEEG(nn.Module):
             nn.Linear(256, vlm_hidden_dim),
             nn.LayerNorm(vlm_hidden_dim),
         )
+
+        # Auxiliary classification head: projected EEG token → 4-class logits
+        # Used only during training to keep the token discriminative across
+        # the 4 EEG classes after projection into the VLM's hidden space.
+        self.aux_classifier = nn.Linear(vlm_hidden_dim, n_aux_classes)
 
         # Per-forward state — set before forward, read by the hook
         self._current_eeg_token: torch.Tensor | None = None
@@ -187,15 +199,36 @@ class SmolVLATokenLevelEEG(nn.Module):
             token = token * mask
         return token
 
-    def forward(self, batch: dict, eeg: torch.Tensor | None = None):
+    def forward(self, batch: dict, eeg: torch.Tensor | None = None,
+                aux_targets: torch.Tensor | None = None,
+                aux_weight: float = 0.0):
+        """
+        Returns (loss, loss_dict) like base_policy.forward.
+        If aux_targets and aux_weight > 0, adds cross-entropy loss on the
+        projected EEG token to keep it 4-class discriminative.
+        """
         if eeg is not None:
             self._current_eeg_token = self._compute_eeg_token(eeg)
         else:
             self._current_eeg_token = None
         try:
-            return self.base_policy.forward(batch)
+            main_loss, loss_dict = self.base_policy.forward(batch)
         finally:
+            saved_token = self._current_eeg_token
             self._current_eeg_token = None
+
+        if aux_targets is not None and aux_weight > 0 and saved_token is not None:
+            aux_logits = self.aux_classifier(saved_token)              # (B, 4)
+            aux_loss = torch.nn.functional.cross_entropy(aux_logits, aux_targets)
+            with torch.no_grad():
+                aux_acc = (aux_logits.argmax(-1) == aux_targets).float().mean().item()
+            loss_dict = dict(loss_dict)
+            loss_dict["aux_loss"] = float(aux_loss.item())
+            loss_dict["aux_acc"]  = aux_acc
+            loss_dict["main_loss"] = float(main_loss.item())
+            return main_loss + aux_weight * aux_loss, loss_dict
+
+        return main_loss, loss_dict
 
     def select_action(self, batch: dict, eeg: torch.Tensor | None = None):
         if eeg is not None:
@@ -226,6 +259,9 @@ def train():
     print(f"LR             : {LR}")
     print(f"EEG dropout    : {EEG_DROPOUT:.0%}")
     print(f"Class-balanced : {CLASS_BALANCED}")
+    print(f"Aux loss weight: {AUX_LOSS_WEIGHT}")
+    print(f"Encoder arch   : {ENCODER_ARCH}")
+    print(f"Encoder ckpt   : {EEG_ENCODER_PT}")
     print(f"VLM hidden dim : {VLM_HIDDEN_DIM}")
     print(f"Device         : {device}")
     print(f"Base ckpt      : {BASE_CHECKPOINT}")
@@ -274,10 +310,15 @@ def train():
     print("  SmolVLA loaded OK")
 
     # ── EEG encoder (frozen) ─────────────────────────────────────────────────
-    print("\n[3/4] Loading EEG encoder ...")
+    print(f"\n[3/4] Loading EEG encoder ({ENCODER_ARCH}) ...")
     enc_ckpt = torch.load(EEG_ENCODER_PT, map_location="cpu", weights_only=False)
-    eeg_enc  = EEGNet(n_channels=64, n_timepoints=320,
-                      n_classes=4, embed_dim=EEG_EMBED_DIM)
+    if ENCODER_ARCH == "atcnet":
+        from eeg_encoder_atcnet import ATCNet
+        eeg_enc = ATCNet(n_channels=64, n_timepoints=320,
+                         n_classes=4, embed_dim=EEG_EMBED_DIM)
+    else:
+        eeg_enc = EEGNet(n_channels=64, n_timepoints=320,
+                         n_classes=4, embed_dim=EEG_EMBED_DIM)
     eeg_enc.load_state_dict(enc_ckpt["backbone_state"], strict=False)
     eeg_enc = eeg_enc.to(device)
     for p in eeg_enc.parameters():
@@ -321,15 +362,20 @@ def train():
             batch = next(loader_iter)
         batch = batch_to_device(batch, device)
 
+        aux_targets = None
         if SYNTHETIC_PAIRING:
             classes = batch_actions_to_classes(batch["action"], a_mean, a_std)
             for c in classes:
                 class_count[c] = class_count.get(c, 0) + 1
             eeg = eeg_sampler.sample_per_class(classes, device)
+            if AUX_LOSS_WEIGHT > 0:
+                aux_targets = torch.tensor(classes, device=device, dtype=torch.long)
         else:
             eeg = eeg_sampler.sample(BATCH_SIZE, device)
 
-        loss, loss_dict = model(batch, eeg=eeg)
+        loss, loss_dict = model(batch, eeg=eeg,
+                                aux_targets=aux_targets,
+                                aux_weight=AUX_LOSS_WEIGHT)
         loss = loss / GRAD_ACCUM
         loss.backward()
 
@@ -351,9 +397,12 @@ def train():
                 tot = sum(class_count.values())
                 pct = {k: v/tot*100 for k,v in class_count.items()}
                 extra = f" | classes(L/R/F/Fwd)={pct[0]:.0f}/{pct[1]:.0f}/{pct[2]:.0f}/{pct[3]:.0f}%"
+            aux_extra = ""
+            if "aux_acc" in loss_dict:
+                aux_extra = f" | aux_acc={loss_dict['aux_acc']*100:.0f}%"
             print(f"  step {step:4d}/{STEPS} | loss={np.mean(loss_window):.4f} | "
                   f"lr={optimizer.param_groups[0]['lr']:.2e} | {sps:.2f} steps/s | "
-                  f"ETA {(STEPS-step-1)/max(sps,1e-6)/60:.1f}min{extra}",
+                  f"ETA {(STEPS-step-1)/max(sps,1e-6)/60:.1f}min{extra}{aux_extra}",
                   flush=True)
             log_step(LOG_PATH, {
                 "step": step, "loss": float(np.mean(loss_window)),
@@ -364,11 +413,13 @@ def train():
         if (step + 1) % SAVE_EVERY == 0 or step == STEPS - 1:
             ckpt = os.path.join(OUTPUT_DIR, f"step_{step+1:06d}.pt")
             torch.save({
-                "step":             step + 1,
-                "eeg_proj_state":   model.eeg_proj.state_dict(),
-                "policy_state":     base_policy.state_dict(),
-                "optimizer_state":  optimizer.state_dict(),
-                "vlm_hidden_dim":   VLM_HIDDEN_DIM,
+                "step":              step + 1,
+                "eeg_proj_state":    model.eeg_proj.state_dict(),
+                "aux_classifier_state": model.aux_classifier.state_dict(),
+                "policy_state":      base_policy.state_dict(),
+                "optimizer_state":   optimizer.state_dict(),
+                "vlm_hidden_dim":    VLM_HIDDEN_DIM,
+                "encoder_arch":      ENCODER_ARCH,
             }, ckpt)
             print(f"  Checkpoint saved: {ckpt}", flush=True)
 

@@ -30,12 +30,13 @@ from eeg_encoder import EEGNet
 from utils import get_device
 
 # ── Config ────────────────────────────────────────────────────────────────────
+ARCH       = os.environ.get("ARCH", "eegnet")    # "eegnet" | "atcnet"
 DATA_PATH  = "./data/eeg_physionet/epochs.npz"
-OUT_DIR    = "./checkpoints/eeg_encoder"
-EPOCHS     = 80
-BATCH_SIZE = 64
-LR         = 1e-3
-DROPOUT    = 0.5
+OUT_DIR    = f"./checkpoints/eeg_encoder_{ARCH}" if ARCH != "eegnet" else "./checkpoints/eeg_encoder"
+EPOCHS     = int(os.environ.get("EPOCHS", "80"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
+LR         = float(os.environ.get("LR", "1e-3"))
+DROPOUT    = float(os.environ.get("DROPOUT", "0.5" if ARCH == "eegnet" else "0.3"))
 EMBED_DIM  = 64
 VAL_SPLIT  = 0.15
 SEED       = 42
@@ -103,16 +104,22 @@ def train():
     print(f"Train: {n_train}  Val: {n_val}  Batch: {BATCH_SIZE}")
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    model = EEGNet(
-        n_channels=n_channels,
-        n_timepoints=n_timepoints,
-        n_classes=n_classes,
-        embed_dim=EMBED_DIM,
-        dropout=DROPOUT,
-    ).to(device)
+    if ARCH == "atcnet":
+        from eeg_encoder_atcnet import ATCNet
+        model = ATCNet(
+            n_channels=n_channels, n_timepoints=n_timepoints,
+            n_classes=n_classes, embed_dim=EMBED_DIM, dropout=DROPOUT,
+        ).to(device)
+        arch_name = "ATCNet"
+    else:
+        model = EEGNet(
+            n_channels=n_channels, n_timepoints=n_timepoints,
+            n_classes=n_classes, embed_dim=EMBED_DIM, dropout=DROPOUT,
+        ).to(device)
+        arch_name = "EEGNet"
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"\nEEGNet: {total_params/1e3:.1f}K parameters")
+    print(f"\n{arch_name}: {total_params/1e3:.1f}K parameters")
 
     # ── Training ──────────────────────────────────────────────────────────────
     # Class-balanced loss weights
