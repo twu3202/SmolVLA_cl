@@ -107,6 +107,7 @@ CLASS_BALANCED    = bool(int(os.environ.get("CLASS_BALANCED", "0")))
 AUX_LOSS_WEIGHT   = float(os.environ.get("AUX_LOSS_WEIGHT", "0.0"))   # 0 = disabled
 ENCODER_ARCH      = os.environ.get("ENCODER_ARCH", "eegnet")   # "eegnet" | "atcnet"
 ENCODER_CKPT      = os.environ.get("ENCODER_CKPT", "")        # override path
+NO_BASE_CKPT      = bool(int(os.environ.get("NO_BASE_CKPT", "0")))  # train expert from scratch
 RUN_TAG           = os.environ.get("RUN_TAG", "")     # extra suffix for output dir
 EEG_DROPOUT       = float(os.environ.get("EEG_DROPOUT",
                                           "0.0" if SYNTHETIC_PAIRING else "0.5"))
@@ -262,6 +263,7 @@ def train():
     print(f"Aux loss weight: {AUX_LOSS_WEIGHT}")
     print(f"Encoder arch   : {ENCODER_ARCH}")
     print(f"Encoder ckpt   : {EEG_ENCODER_PT}")
+    print(f"From scratch   : {NO_BASE_CKPT}")
     print(f"VLM hidden dim : {VLM_HIDDEN_DIM}")
     print(f"Device         : {device}")
     print(f"Base ckpt      : {BASE_CHECKPOINT}")
@@ -299,15 +301,22 @@ def train():
     loader_iter = iter(loader)
 
     # ── Base SmolVLA ──────────────────────────────────────────────────────────
-    print("\n[2/4] Loading base SmolVLA ...")
-    cfg = make_libero_smolvla_config(device)
-    cfg.load_vlm_weights = False
-    base_policy = SmolVLAPolicy(cfg).to(device)
-    state_dict  = torch.load(BASE_CHECKPOINT, map_location=device, weights_only=False)
-    if isinstance(state_dict, dict) and "policy_state" in state_dict:
-        state_dict = state_dict["policy_state"]
-    base_policy.load_state_dict(state_dict)
-    print("  SmolVLA loaded OK")
+    if NO_BASE_CKPT:
+        print("\n[2/4] Building base SmolVLA from scratch (random expert + pretrained VLM) ...")
+        cfg = make_libero_smolvla_config(device)
+        cfg.load_vlm_weights = True   # VLM from HuggingFace, expert random
+        base_policy = SmolVLAPolicy(cfg).to(device)
+        print("  SmolVLA initialized: VLM=pretrained, action_expert=random")
+    else:
+        print("\n[2/4] Loading base SmolVLA from checkpoint ...")
+        cfg = make_libero_smolvla_config(device)
+        cfg.load_vlm_weights = False
+        base_policy = SmolVLAPolicy(cfg).to(device)
+        state_dict  = torch.load(BASE_CHECKPOINT, map_location=device, weights_only=False)
+        if isinstance(state_dict, dict) and "policy_state" in state_dict:
+            state_dict = state_dict["policy_state"]
+        base_policy.load_state_dict(state_dict)
+        print("  SmolVLA loaded OK")
 
     # ── EEG encoder (frozen) ─────────────────────────────────────────────────
     print(f"\n[3/4] Loading EEG encoder ({ENCODER_ARCH}) ...")
