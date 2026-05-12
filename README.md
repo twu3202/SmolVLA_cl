@@ -172,189 +172,192 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 ---
 
-## What this shows
+## 代码结构总览 / What this shows
 
-**Four progressive stages**, each building on the last:
+**四个递进的阶段（Four progressive stages）**，每一阶段都建立在前一阶段之上：
 
-### Stage 1 — Environment & baseline demos
+### 阶段一 / Stage 1 — 环境配置与基线 demo
 
-| File | What it does |
-|------|-------------|
-| `quick_test.py` | Sanity check — verifies all imports and tensor shapes (~15s) |
-| `demo_libero_env.py` | LIBERO sim with random policy, saves camera frames |
-| `demo_smolvla_libero.py` | SmolVLA on LIBERO with randomly-initialised action expert |
-| `demo_smolvla_base_libero.py` | Pretrained `lerobot/smolvla_base` (SO100) cross-embodiment test on LIBERO |
-| `libero_smolvla_config.py` | LIBERO-specific `SmolVLAConfig` (14-dim state, 7-dim action, 2 cameras) |
-| `utils.py` | Shared helpers: `obs_to_policy_batch`, normalization, frame saving |
+| 文件 | 功能描述 |
+|------|---------|
+| `quick_test.py` | 健全性检查 — 验证 import 和 tensor shape（约15秒） |
+| `demo_libero_env.py` | LIBERO 仿真环境 + 随机策略，保存摄像头帧 |
+| `demo_smolvla_libero.py` | SmolVLA 在 LIBERO 上跑（action expert 随机初始化） |
+| `demo_smolvla_base_libero.py` | 预训练 `lerobot/smolvla_base` (SO100) 跨形态测试 |
+| `libero_smolvla_config.py` | LIBERO 专用 `SmolVLAConfig`（14维state，7维action，双摄像头） |
+| `utils.py` | 共用工具函数：`obs_to_policy_batch`、归一化、保存帧 |
 
-### Stage 2 — Fine-tuning on LIBERO + adding EEG
+### 阶段二 / Stage 2 — LIBERO 微调 + 加入 EEG 模态
 
-| File | What it does |
-|------|-------------|
-| `dataset_libero.py` | PyTorch Dataset over LIBERO HDF5 demos; computes normalization stats |
-| `train_smolvla_libero.py` | Fine-tunes action expert on LIBERO spatial (2000 steps, ~38 min on M5) |
-| `load_trained.py` | Helper to load any saved checkpoint for evaluation or inference |
-| `eval_openloop.py` | Open-loop action prediction accuracy vs ground-truth demos |
-| `plot_training.py` | Loss curve + LR schedule from `train_log.jsonl` |
-| `plot_eval.py` | Multi-panel comparison: random / trained (no VLM) / trained (pretrained VLM) |
-| `download_eeg_data.py` | Downloads PhysioNet EEGMMIDB via MNE; extracts 2s bandpass-filtered epochs |
-| `eeg_encoder.py` | EEGNet: 585K-param depthwise-separable CNN → 64-dim embedding |
-| `train_eeg_encoder.py` | Pretrains EEGNet on 4-class motor imagery |
-| `train_smolvla_eeg.py` | `SmolVLAWithEEG` wrapper: injects EEG embedding additively into robot state |
-| `eval_openloop_eeg.py` | Evaluates all 5 EEG conditions; produces per-condition MAE/L2/gripper plot |
+| 文件 | 功能描述 |
+|------|---------|
+| `dataset_libero.py` | LIBERO HDF5 数据的 PyTorch Dataset；计算归一化统计量 |
+| `train_smolvla_libero.py` | 在 LIBERO spatial 上微调 action expert（2000步，M5约38分钟） |
+| `load_trained.py` | 加载任意 checkpoint 用于评估或推理 |
+| `eval_openloop.py` | 开环动作预测精度评估（对比 ground-truth） |
+| `plot_training.py` | 训练 loss 和 LR schedule 可视化 |
+| `plot_eval.py` | 多面板对比：random / trained-no-VLM / trained-pretrained-VLM |
+| `download_eeg_data.py` | 通过 MNE 下载 PhysioNet EEGMMIDB；提取2秒带通滤波 epochs |
+| `eeg_encoder.py` | EEGNet：585K 参数 depthwise-separable CNN → 64维 embedding |
+| `train_eeg_encoder.py` | 在4分类运动想象任务上预训练 EEGNet |
+| `train_smolvla_eeg.py` | `SmolVLAWithEEG` 包装器：将 EEG embedding 加法注入到机器人状态 |
+| `eval_openloop_eeg.py` | 评估5种 EEG 条件；生成每条件 MAE/L2/夹爪准确率图 |
 
-### Stage 3 — Synthetic deterministic EEG-action pairing
+### 阶段三 / Stage 3 — 合成确定性 EEG-动作配对
 
-| File | What it does |
-|------|-------------|
-| `train_smolvla_eeg.py` (`SYNTHETIC_PAIRING=1`) | Forces EEG class to match action semantics; sets dropout=0 |
-| `eval_synthetic_eeg.py` | Controllability test: directional output shift per EEG condition |
+| 文件 | 功能描述 |
+|------|---------|
+| `train_smolvla_eeg.py` (`SYNTHETIC_PAIRING=1`) | 强制 EEG 类别匹配动作语义；dropout=0 |
+| `eval_synthetic_eeg.py` | 可控性测试：每种 EEG 条件下输出的方向偏移 |
 
-### Stage 4 — Representation learning analysis
+### 阶段四 / Stage 4 — 表征学习分析
 
-| File | What it does |
-|------|-------------|
-| `analyze_representations.py` | CKA + linear probing + regression analysis on EEG/action representations |
-| `plot_eeg_embedding_2d.py` | Standalone PCA + t-SNE visualization of EEGNet embeddings by class |
+| 文件 | 功能描述 |
+|------|---------|
+| `analyze_representations.py` | CKA + linear probing + 回归分析 EEG/action 表征关系 |
+| `plot_eeg_embedding_2d.py` | EEGNet embedding 按类别的 PCA + t-SNE 可视化 |
+| `compare_eeg_embeddings.py` | EEGNet 与 ATCNet 两种编码器的 embedding 对比可视化 |
 
 ---
 
-## Environment setup
+## 环境配置 / Environment setup
 
-Python 3.12 with `lerobot` (from source) and `libero` (via PYTHONPATH), running on Apple MPS:
+Python 3.12 + `lerobot`（源码安装）+ `libero`（PYTHONPATH注入），在 Apple MPS 上运行：
 
 ```bash
-conda env list   # should show: lerobot, libero
+conda env list   # 应该看到：lerobot, libero
 
-# All scripts run with:
+# 所有脚本运行方式 / All scripts run with:
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python <script.py>
 
-# Additional packages needed for EEG pipeline:
+# EEG 管线额外需要的包 / Additional packages for EEG pipeline:
 pip install mne moabb scikit-learn pymatreader
 ```
 
 ---
 
-## Quickstart
+## 快速上手 / Quickstart
 
 ```bash
 cd /Users/r/Projects/SmolVLA_cl
 
-# ── Stage 1: train baseline SmolVLA on LIBERO ─────────────────────────────────
+# ── 阶段一：在 LIBERO 上训练 SmolVLA 基线 ──────────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
-# Variant with pretrained VLM backbone
+# 使用预训练 VLM backbone 的变体
 LOAD_VLM=1 RUN_NAME=libero_spatial_vlm \
     PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
-# Evaluation + comparison plot
+# 评估 + 对比绘图
 MODEL=trained PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop.py
 /opt/anaconda3/envs/lerobot/bin/python plot_eval.py
 
-# ── Stage 2: add EEG modality (random pairing, 50% dropout) ───────────────────
+# ── 阶段二：加入 EEG 模态（随机配对，50% dropout） ──────────────────────────────
 /opt/anaconda3/envs/lerobot/bin/python download_eeg_data.py --subjects 10
 /opt/anaconda3/envs/lerobot/bin/python train_eeg_encoder.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop_eeg.py
 
-# ── Stage 3: synthetic EEG-action pairing + 0% dropout ────────────────────────
+# ── 阶段三：合成确定性 EEG-动作配对 + 0% dropout ──────────────────────────────
 SYNTHETIC_PAIRING=1 PYTHONPATH=/Users/r/LIBERO \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_synthetic_eeg.py
 
-# ── Stage 4: representation analysis ──────────────────────────────────────────
+# ── 阶段四：表征学习分析 ──────────────────────────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python analyze_representations.py
 /opt/anaconda3/envs/lerobot/bin/python plot_eeg_embedding_2d.py
+# EEGNet 与 ATCNet embedding 对比可视化
+/opt/anaconda3/envs/lerobot/bin/python compare_eeg_embeddings.py
 ```
 
 ---
 
-## Performance on M5 MPS
+## M5 MPS 性能 / Performance on M5 MPS
 
-SmolVLA uses **action chunking**: one VLM forward pass generates 50 actions, executed one per step.
+SmolVLA 使用 **action chunking**：一次 VLM 前向生成50个动作，每步从队列里取出一个。
 
-| Phase | Time |
+| 阶段 | 耗时 |
 |---|---|
-| First inference — chunk of 50 (pretrained VLM) | ~8–12 s |
-| Steps 1–49 — pop from queue | ~1 ms |
-| Training step (action expert only, MPS) | ~0.85 s/step |
-| EEG encoder inference (EEGNet, MPS) | < 1 ms |
+| 首次推理 — 生成50步 chunk（预训练VLM） | ~8–12 秒 |
+| 第1–49步 — 从队列中弹出 | ~1 毫秒 |
+| 训练单步（仅 action expert，MPS） | ~0.85 秒/步 |
+| EEG encoder 推理（EEGNet，MPS） | < 1 毫秒 |
 
-Full training runs completed on M5 MPS:
+在 M5 MPS 上完成的训练任务：
 
-| Run | Steps | Time |
+| 任务 | 步数 | 耗时 |
 |---|---|---|
-| Stage 1 — SmolVLA, random VLM | 2000 | 38.4 min |
-| Stage 1 — SmolVLA, pretrained VLM | 2000 | 27.3 min |
-| Stage 2 — SmolVLA+EEG, random pairing | 1000 | 24.6 min |
-| Stage 3 — SmolVLA+EEG, synthetic pairing | 1000 | 23.4 min |
+| 阶段一 — SmolVLA，随机 VLM | 2000 | 38.4 分钟 |
+| 阶段一 — SmolVLA，预训练 VLM | 2000 | 27.3 分钟 |
+| 阶段二 — SmolVLA+EEG，随机配对 | 1000 | 24.6 分钟 |
+| 阶段三 — SmolVLA+EEG，合成配对 | 1000 | 23.4 分钟 |
 
 ---
 
-## Feature layout
+## 输入输出维度 / Feature layout
 
-### SmolVLA (Stage 1)
+### SmolVLA（阶段一 / Stage 1）
 
 ```
-observation.images.image      (1, 3, 128, 128)  ← agentview camera
-observation.images.image2     (1, 3, 128, 128)  ← wrist camera
+observation.images.image      (1, 3, 128, 128)  ← agentview 摄像头
+observation.images.image2     (1, 3, 128, 128)  ← 手腕摄像头
 observation.state             (1, 14)           ← eef_pos(3) + eef_quat(4) + joint_pos(7)
-observation.language.tokens   (1, 48)           ← tokenized task description
-action output                 (50, 7)           ← chunk: delta_xyz(3)+delta_rpy(3)+gripper(1)
+observation.language.tokens   (1, 48)           ← 任务描述的 token
+action output                 (50, 7)           ← chunk：delta_xyz(3) + delta_rpy(3) + gripper(1)
 ```
 
-### SmolVLA+EEG (Stages 2 & 3)
+### SmolVLA+EEG（阶段二、三 / Stages 2 & 3）
 
 ```
-observation.images.image      (1, 3, 128, 128)  ← agentview camera
-observation.images.image2     (1, 3, 128, 128)  ← wrist camera
-observation.state             (1, 14)           ← robot state (normalized)
-observation.language.tokens   (1, 48)           ← tokenized task description
-observation.eeg               (1, 1, 64, 320)   ← 64-ch × 2s EEG @ 160 Hz  ← NEW
-action output                 (50, 7)           ← same as above
+observation.images.image      (1, 3, 128, 128)  ← agentview 摄像头
+observation.images.image2     (1, 3, 128, 128)  ← 手腕摄像头
+observation.state             (1, 14)           ← 机器人状态（已归一化）
+observation.language.tokens   (1, 48)           ← 任务描述 token
+observation.eeg               (1, 1, 64, 320)   ← 64通道 × 2秒 EEG @ 160 Hz  ← 新增
+action output                 (50, 7)           ← 同上
 ```
 
 ---
 
-## Architecture
+## 架构 / Architecture
 
-### SmolVLA (Stage 1)
+### SmolVLA（阶段一 / Stage 1）
 
 ```
-LIBERO sim (robosuite/MuJoCo)
+LIBERO 仿真环境 (robosuite/MuJoCo)
       │
-      ▼ agentview + wrist frames, joint states
-obs_to_policy_batch()   ← normalize, tokenize task language
+      ▼ agentview + 手腕摄像头帧 + 关节状态
+obs_to_policy_batch()   ← 归一化、tokenize 任务描述
       │
       ▼
 SmolVLAPolicy
-  ├─ SmolVLM2-500M backbone  (frozen during fine-tuning)
-  │    └─ vision encoder + language transformer → context tokens
-  └─ Flow-matching action expert  (trained, ~100M params)
-       └─ denoises noise → 50-action chunk over 10 diffusion steps
+  ├─ SmolVLM2-500M backbone  （微调时冻结）
+  │    └─ 视觉 encoder + 语言 transformer → 上下文 token
+  └─ Flow-matching action expert  （训练，约100M参数）
+       └─ 10步去噪：噪声 → 50步动作 chunk
       │
       ▼
-env.step(action[0])   ← 7-DOF delta control, pop next from chunk
+env.step(action[0])   ← 7-DOF 增量控制，从 chunk 弹出下一步
 ```
 
-### SmolVLA+EEG (Stages 2 & 3)
+### SmolVLA+EEG（阶段二、三 / Stages 2 & 3）
 
 ```
-EEG headset (64 ch, 160 Hz)
-      │ 2-second window
+EEG 头戴设备 (64通道，160 Hz)
+      │ 2秒窗口
       ▼
-EEGNet encoder  (pretrained on PhysioNet MI, frozen, 585K params)
-      │ 64-dim motor-imagery embedding
+EEGNet encoder  （在 PhysioNet MI 上预训练，冻结，585K参数）
+      │ 64维运动想象 embedding
       ▼
-Linear projection  (64 → 14, trainable, 900 params)
+线性投影 (64 → 14，可训练，900参数)
       │
       + ──────────────────────────────────┐
       │                                   │
-robot state (14-dim, normalized)   ← added together
+机器人状态 (14维，归一化)             ← 加法注入
       │
       ▼
-SmolVLAPolicy  (same as above, action expert continues training)
+SmolVLAPolicy  （与上面相同，action expert 继续训练）
       │
       ▼
-50-action chunk → env.step()
+50步动作 chunk → env.step()
 ```
 
-The EEG embedding is **added** to the robot state vector before it enters SmolVLA's state projection layer. Stages 3 & 4 demonstrated empirically that this additive injection is too shallow — the correct fix is to project EEG into SmolVLM2's hidden dimension and feed it as an extra token through the transformer attention layers alongside image patches and language tokens.
+EEG embedding 在进入 SmolVLA 的 state projection 层之前，被**加**到机器人状态向量上。阶段三和阶段四从实证角度证明：这种 additive injection 太浅——正确的修复方案是把 EEG 投影到 SmolVLM2 的 hidden dimension，作为额外的 token 与图像 patch、语言 token 一起送入 transformer 的 attention 层进行深度融合。
