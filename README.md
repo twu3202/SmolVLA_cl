@@ -28,9 +28,9 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ![三模型对比](checkpoints/libero_spatial/eval_comparison.png)
 
-| 模型 | MAE ↓ | L2 ↓ | 夹爪准确率 ↑ |
+| Model | MAE ↓ | L2 ↓ | Gripper accuracy ↑ |
 |---|---|---|---|
-| Random weights（基线） | 0.931 | 2.989 | 59.7% |
+| Random weights (baseline) | 0.931 | 2.989 | 59.7% |
 | Trained — random VLM | 0.246 | 1.004 | 84.3% |
 | Trained — pretrained VLM | 0.255 | 0.997 | **92.0%** |
 
@@ -58,13 +58,13 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ![阶段二EEG评估](eval_output/eeg_eval_libero_spatial.png)
 
-| EEG条件 | 含义 | MAE | L2 | 夹爪 |
+| EEG condition | Meaning | MAE | L2 | Gripper |
 |---|---|---|---|---|
-| no_eeg | 零脑电（基线） | 0.342 | 1.442 | 48.0% |
-| left_fist | 想象握左拳 | 0.355 | 1.572 | 35.7% |
-| right_fist | 想象握右拳 | 0.361 | 1.524 | 43.7% |
-| both_fists | 想象双手握拳 | 0.323 | 1.381 | 54.3% |
-| both_feet | 想象双脚用力 | 0.355 | 1.561 | 34.3% |
+| no_eeg | Zero EEG (baseline) | 0.342 | 1.442 | 48.0% |
+| left_fist | Imagine clenching left fist | 0.355 | 1.572 | 35.7% |
+| right_fist | Imagine clenching right fist | 0.361 | 1.524 | 43.7% |
+| both_fists | Imagine clenching both fists | 0.323 | 1.381 | 54.3% |
+| both_feet | Imagine pressing both feet | 0.355 | 1.561 | 34.3% |
 
 
 阶段二建立了EEG作为额外输入modality的完整管线，并测试模型在不同想象任务下的表现。但在这个阶段，**训练时EEG是随机采样的**（跟当前action完全无关），因此模型学不到任何"EEG → 动作"的对应关系。
@@ -92,12 +92,12 @@ Flow-matching loss 从初始的 ~2.7 降至最终 0.878（随机VLM backbone）�
 
 ![阶段三可控性测试](eval_output/controllability_libero_spatial.png)
 
-| EEG条件 | 期望偏移 | 实际偏移 | 通过 |
+| EEG condition | Expected shift | Observed shift | Pass |
 |---|---|---|---|
-| left_fist | Δx 显著 < 0 | +0.010（几乎无变化） | ✗ |
-| right_fist | Δx 显著 > 0 | −0.032（方向反了） | ✗ |
-| both_fists | gripper 显著 < 0 | **−0.095**（方向对） | ✓ |
-| both_feet | Δy 显著 > 0 | −0.016（方向反了） | ✗ |
+| left_fist | Δx significantly < 0 | +0.010 (almost no change) | ✗ |
+| right_fist | Δx significantly > 0 | −0.032 (wrong direction) | ✗ |
+| both_fists | gripper significantly < 0 | **−0.095** (correct direction) | ✓ |
+| both_feet | Δy significantly > 0 | −0.016 (wrong direction) | ✗ |
 
 **总体：1/4 通过**
 
@@ -136,17 +136,17 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 ### 关键数值
 
-| 指标 | 数值 | 解读 |
+| Metric | Value | Interpretation |
 |---|---|---|
-| **CKA(EEG, action) — paired** | 0.132 | EEG 和 action 空间几乎正交 |
+| **CKA(EEG, action) — paired** | 0.132 | EEG and action spaces are nearly orthogonal |
 | **CKA(EEG, action) — random** | 0.005 | random baseline |
-| 提升倍数 | 25× | pairing 有效，但绝对值仍很低 |
-| 各 action 维度 CKA | gripper=0.231，translation≈0.04，rotation≈0.006 | gripper 最对齐，rotation 几乎完全无关 |
-| EEG → MI 类别（linear probe） | **81.7%** | EEGNet 学到了 discriminative features |
-| EEG → action 类别（paired） | 91.8% | 来自配对构造本身，非真实相关 |
-| EEG → action 类别（random 控制） | 50.0% | 类别不平衡导致 |
-| EEG → Δxyz 回归 R²（paired） | **+0.065** | EEG 几乎不能预测连续动作 |
-| EEG → Δxyz 回归 R²（random） | −0.023 | random baseline，符合预期 |
+| Improvement factor | 25× | Pairing is effective but absolute value is still small |
+| Per-action-dim CKA | gripper=0.231, translation≈0.04, rotation≈0.006 | Gripper is the most aligned; rotation is essentially independent |
+| EEG → MI class (linear probe) | **81.7%** | EEGNet learned discriminative features |
+| EEG → action class (paired) | 91.8% | Comes from the pairing construction itself, not real correlation |
+| EEG → action class (random control) | 50.0% | Class-imbalance ceiling |
+| EEG → Δxyz regression R² (paired) | **+0.065** | EEG can barely predict continuous actions |
+| EEG → Δxyz regression R² (random) | −0.023 | Random baseline, as expected |
 
 
 阶段四从 representation 层面给出了系统性的诊断：
@@ -159,14 +159,14 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 ### 综合结论
 
-| 问题 | 答案 |
+| Question | Answer |
 |---|---|
-| EEGNet 是否学到了 discriminative features？ | ✅ 是（81.6% linear sep） |
-| EEG 和 action 空间是否对齐？ | ⚠️ 几乎正交（CKA=0.13） |
-| 这种正交是好是坏？ | 理论上好（独立信息），但需要正确的 fusion |
-| EEG 能否预测连续动作？ | ❌ 不能（R²=0.065） |
-| 当前架构能利用 EEG 吗？ | ❌ 不能（1/4 controllability 测试通过） |
-| 修复方向？ | Token-level VLM 注入，让 EEG 经过 attention 层 |
+| Did EEGNet learn discriminative features? | ✅ Yes (81.6% linear separability) |
+| Is the EEG space aligned with action space? | ⚠️ Nearly orthogonal (CKA=0.13) |
+| Is this orthogonality good or bad? | Theoretically good (independent information), but needs proper fusion |
+| Can EEG predict continuous actions? | ❌ No (R²=0.065) |
+| Can the current architecture exploit EEG? | ❌ No (only 1/4 controllability tests pass) |
+| Fix direction? | Token-level VLM injection so EEG passes through attention layers |
 
 阶段四从理论上闭环了整个项目的诊断：**问题在架构而非数据**。EEG modality 在自己的空间里是有意义的、discriminative 的，但简单的 additive injection 不足以把它整合进多模态决策。下一步应该是把 EEG 投影到 SmolVLM2 的 hidden dimension，作为额外的 token 送入 transformer，与图像 patch 和语言 token 一起经过深度 attention 融合。
 
@@ -183,11 +183,11 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 ### 阶段五的三个子实验（v2/v3/v4）
 
-| 子阶段 | 修改点 | 步数 | EEG 编码器 | 类别平衡 | 通过/4 |
+| Sub-stage | Change | Steps | EEG encoder | Class-balanced | Pass / 4 |
 |---|---|---|---|---|---|
-| **5a (v2)** | 把 additive 改为 token-level 注入 | 1000 | EEGNet 40.7% | ✗ | 2/4 |
-| **5b (v3)** | 加入 `WeightedRandomSampler` 平衡4类样本 | 2000 | EEGNet 40.7% | ✓ | 2/4 |
-| **5c (v4)** ★ | 在 109 个 PhysioNet 受试者上重训 EEGNet → 51.6% val_acc，token+balanced+3000步 | 3000 | EEGNet 51.6% | ✓ | **3/4** |
+| **5a (v2)** | Change additive → token-level injection | 1000 | EEGNet 40.7% | ✗ | 2/4 |
+| **5b (v3)** | Add `WeightedRandomSampler` to balance the 4 classes | 2000 | EEGNet 40.7% | ✓ | 2/4 |
+| **5c (v4)** ★ | Retrain EEGNet on 109 PhysioNet subjects → 51.6% val_acc, token+balanced+3000 steps | 3000 | EEGNet 51.6% | ✓ | **3/4** |
 
 阶段五最重要的成果是 **v4 — 第一次达到 3/4 通过**：
 
@@ -209,9 +209,9 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 - **代表脚本**：`eeg_encoder_atcnet.py`、`train_smolvla_eeg_token.py`（带 `ENCODER_ARCH=atcnet`、`AUX_LOSS_WEIGHT=0.2`）
 
-| Variant | encoder | aux loss | n_pass | 通过的类别 |
+| Variant | Encoder | Aux loss | n_pass | Passed classes |
 |---|---|---|---|---|
-| v4（参考） | EEGNet 51.6% | ✗ | **3/4** ★ | right_fist + both_fists + both_feet |
+| v4 (reference) | EEGNet 51.6% | ✗ | **3/4** ★ | right_fist + both_fists + both_feet |
 | **v5** | ATCNet 57.7% | 0.2 | **1/4** | both_feet |
 | **v6** | ATCNet 57.7% | ✗ | **2/4** | right_fist + both_feet |
 
@@ -228,9 +228,9 @@ EEGNet 的 64 维 embedding 投影到 2D 空间。两个图分别用 PCA（线�
 
 v4 在 3000 步时达到 3/4，唯一失败的是 `left_fist`。我们假设训练更久（5000步）可以让模型把最后一个未通过的方向也学会。
 
-| Variant | encoder | 步数 | n_pass | 通过的类别 |
+| Variant | Encoder | Steps | n_pass | Passed classes |
 |---|---|---|---|---|
-| v4（参考） | EEGNet 51.6% | 3000 | 3/4 | right + both_fists + both_feet |
+| v4 (reference) | EEGNet 51.6% | 3000 | 3/4 | right + both_fists + both_feet |
 | **v7** | EEGNet 51.6% | 5000 | **2/4** | **left_fist + right_fist** |
 
 - **新突破**：v7 是项目里**第一次让 `left_fist` 通过**（Δx = −0.025，方向终于对了！）
@@ -248,10 +248,10 @@ v4 在 3000 步时达到 3/4，唯一失败的是 `left_fist`。我们假设训�
 - **设置**：ATCNet 编码器（冻结，57.7%）+ 随机初始化的 action expert + 预训练 SmolVLM2 + 5000 步类别平衡训练
 - **最终 loss**：0.6963
 
-| Variant | encoder | expert 初始化 | n_pass | 通过的类别 |
+| Variant | Encoder | Expert init | n_pass | Passed classes |
 |---|---|---|---|---|
-| v6（参考） | ATCNet 57.7% | continued from v4 | 2/4 | right_fist + both_feet |
-| **v8** | ATCNet 57.7% | **random** | **2/4** | right_fist + both_feet |
+| v6 (reference) | ATCNet 57.7% | Continued from v4 | 2/4 | right_fist + both_feet |
+| **v8** | ATCNet 57.7% | **Random** | **2/4** | right_fist + both_feet |
 
 **关键结果**：v8 和 v6 **通过完全一样的两类**。"encoder mismatch" 假设被推翻——expert 是否从零训练根本没影响。
 
@@ -269,28 +269,28 @@ v4 在 3000 步时达到 3/4，唯一失败的是 `left_fist`。我们假设训�
 
 ![v1-v8 全阶段 controllability progression](eval_output/controllability_v1_v8.png)
 
-| Variant | Stage | 注入方式 | Encoder | 步数 | Bal | Aux | Pass | 备注 |
+| Variant | Stage | Injection | Encoder | Steps | Bal | Aux | Pass | Note |
 |---|---|---|---|---|---|---|---|---|
-| v1 | 3 | additive | EEGNet 40.7% | 1000 | ✗ | ✗ | 1/4 | additive 基线 |
-| v2 | 5a | token | EEGNet 40.7% | 1000 | ✗ | ✗ | 2/4 | 首次架构升级 |
-| v3 | 5b | token | EEGNet 40.7% | 2000 | ✓ | ✗ | 2/4 | 加入类别平衡 |
-| **v4** | **5c** | **token** | **EEGNet 51.6%** | **3000** | **✓** | **✗** | **3/4 ★** | **项目最佳** |
-| v5 | 6a | token | ATCNet 57.7% | 3000 | ✓ | 0.2 | 1/4 | aux loss 反伤 |
-| v6 | 6b | token | ATCNet 57.7% | 3000 | ✓ | ✗ | 2/4 | 更强 encoder 反伤 |
-| v7 | 7 | token | EEGNet 51.6% | 5000 | ✓ | ✗ | 2/4 | 首次 left_fist 通过 |
-| v8 | 8 | token | ATCNet 57.7% (scratch) | 5000 | ✓ | ✗ | 2/4 | 推翻 mismatch 假设 |
+| v1 | 3 | additive | EEGNet 40.7% | 1000 | ✗ | ✗ | 1/4 | Additive baseline |
+| v2 | 5a | token | EEGNet 40.7% | 1000 | ✗ | ✗ | 2/4 | First architectural upgrade |
+| v3 | 5b | token | EEGNet 40.7% | 2000 | ✓ | ✗ | 2/4 | Added class balancing |
+| **v4** | **5c** | **token** | **EEGNet 51.6%** | **3000** | **✓** | **✗** | **3/4 ★** | **Project best** |
+| v5 | 6a | token | ATCNet 57.7% | 3000 | ✓ | 0.2 | 1/4 | Aux loss backfired |
+| v6 | 6b | token | ATCNet 57.7% | 3000 | ✓ | ✗ | 2/4 | Stronger encoder backfired |
+| v7 | 7 | token | EEGNet 51.6% | 5000 | ✓ | ✗ | 2/4 | First left_fist pass |
+| v8 | 8 | token | ATCNet 57.7% (scratch) | 5000 | ✓ | ✗ | 2/4 | Refutes mismatch hypothesis |
 
 ### 阶段五至八的综合结论
 
-| 假设 | 实证结果 |
+| Hypothesis | Empirical result |
 |---|---|
-| Token-level 注入 > additive | ✅ 成立（v1→v2: 1/4→2/4） |
-| 平衡类别采样有帮助 | ✅ 成立（v2→v4 路径上必要） |
-| 训练更久 → 更好 | ⚠️ 部分成立 — 解锁新类别但牺牲旧类别（v4→v7） |
-| 更强的 EEG 编码器 → 更好 | ❌ 反例 — ATCNet 57.7% 比 EEGNet 51.6% 差 |
-| 辅助分类损失稳定 EEG 信号 | ❌ 反例 — aux loss 让 expert 更容易绕过 EEG |
-| Expert 从零训练修复 encoder mismatch | ❌ 假设不成立 — v8 和 v6 同结果 |
-| 单一配置可达 4/4 | ❌ 全部尝试中无任何配置同时满足 4 个方向 |
+| Token-level injection > additive | ✅ Holds (v1→v2: 1/4→2/4) |
+| Balanced class sampling helps | ✅ Holds (necessary along the v2→v4 path) |
+| Training longer → better | ⚠️ Partial — unlocks new classes but sacrifices old ones (v4→v7) |
+| Stronger EEG encoder → better | ❌ Counter-example — ATCNet 57.7% does worse than EEGNet 51.6% |
+| Aux classification loss stabilises the EEG signal | ❌ Counter-example — aux loss lets the expert route around EEG |
+| Expert-from-scratch fixes "encoder mismatch" | ❌ Hypothesis disproved — v8 = v6 outcome |
+| One single config can reach 4/4 | ❌ No tried configuration covers all 4 directions simultaneously |
 
 **核心洞察**：4 个 MI 类别的可控性在 token-level 架构里**是竞争性的**——训练时长、encoder 强度、辅助损失等任意一项变化，都会改变 4 个方向之间的信号分配。这不是数据问题（阶段四已证明 EEG embedding 本身 81.6% 判别），也不是注入位置问题（阶段五已修复），而是 **flow-matching action expert 的内部 attention 路径无法同时承载 4 个独立方向的 EEG 信号**。
 
@@ -301,120 +301,174 @@ v4 在 3000 步时达到 3/4，唯一失败的是 `left_fist`。我们假设训�
 
 ---
 
-## 代码结构总览 / What this shows
+## Deep-dive: why does ATCNet underperform EEGNet?
 
-**四个递进的阶段（Four progressive stages）**，每一阶段都建立在前一阶段之上：
+这是阶段六到阶段八的核心反直觉发现。乍看之下，ATCNet（57.7% MI val_acc）应该比 EEGNet（51.6%）更强 — 但在 controllability 测试里它系统性地输给 EEGNet。三个独立的诊断都指向同一个结论：**总体准确率没问题，问题在于每类的可判别力是否均匀**。
 
-### 阶段一 / Stage 1 — 环境配置与基线 demo
+### 1. 每类 linear separability（线性可分性）
 
-| 文件 | 功能描述 |
-|------|---------|
-| `quick_test.py` | 健全性检查 — 验证 import 和 tensor shape（约15秒） |
-| `demo_libero_env.py` | LIBERO 仿真环境 + 随机策略，保存摄像头帧 |
-| `demo_smolvla_libero.py` | SmolVLA 在 LIBERO 上跑（action expert 随机初始化） |
-| `demo_smolvla_base_libero.py` | 预训练 `lerobot/smolvla_base` (SO100) 跨形态测试 |
-| `libero_smolvla_config.py` | LIBERO 专用 `SmolVLAConfig`（14维state，7维action，双摄像头） |
-| `utils.py` | 共用工具函数：`obs_to_policy_batch`、归一化、保存帧 |
+用 5-fold LR cross-validation 在 EEGNet 和 ATCNet 的 64 维 embedding 上做线性分类：
 
-### 阶段二 / Stage 2 — LIBERO 微调 + 加入 EEG 模态
+| Class | EEGNet | ATCNet | Δ (ATC − EEG) |
+|---|---|---|---|
+| left_fist | **68.9%** | 64.3% | −4.6 pp |
+| right_fist | **65.1%** | 61.8% | −3.3 pp |
+| both_fists | 72.0% | **73.9%** | +1.9 pp |
+| both_feet | 69.6% | **70.2%** | +0.6 pp |
+| **Overall LR acc** | **67.2%** | 65.3% | −1.9 pp |
+| **Per-class spread** | **6.9 pp** | 12.1 pp | +5.2 pp |
 
-| 文件 | 功能描述 |
-|------|---------|
-| `dataset_libero.py` | LIBERO HDF5 数据的 PyTorch Dataset；计算归一化统计量 |
-| `train_smolvla_libero.py` | 在 LIBERO spatial 上微调 action expert（2000步，M5约38分钟） |
-| `load_trained.py` | 加载任意 checkpoint 用于评估或推理 |
-| `eval_openloop.py` | 开环动作预测精度评估（对比 ground-truth） |
-| `plot_training.py` | 训练 loss 和 LR schedule 可视化 |
-| `plot_eval.py` | 多面板对比：random / trained-no-VLM / trained-pretrained-VLM |
-| `download_eeg_data.py` | 通过 MNE 下载 PhysioNet EEGMMIDB；提取2秒带通滤波 epochs |
-| `eeg_encoder.py` | EEGNet：585K 参数 depthwise-separable CNN → 64维 embedding |
-| `train_eeg_encoder.py` | 在4分类运动想象任务上预训练 EEGNet |
-| `train_smolvla_eeg.py` | `SmolVLAWithEEG` 包装器：将 EEG embedding 加法注入到机器人状态 |
-| `eval_openloop_eeg.py` | 评估5种 EEG 条件；生成每条件 MAE/L2/夹爪准确率图 |
+![ATCNet vs EEGNet — per-class breakdown](eval_output/atcnet_vs_eegnet.png)
 
-### 阶段三 / Stage 3 — 合成确定性 EEG-动作配对
+### 2. ATCNet 的"额外"准确率从哪里来？
 
-| 文件 | 功能描述 |
-|------|---------|
-| `train_smolvla_eeg.py` (`SYNTHETIC_PAIRING=1`) | 强制 EEG 类别匹配动作语义；dropout=0 |
-| `eval_synthetic_eeg.py` | 可控性测试：每种 EEG 条件下输出的方向偏移 |
+- 总体 MI 分类准确率：ATCNet 57.7% vs EEGNet 51.6%（+6.1 pp）
+- 但 *linear separability* 反而 EEGNet 更高（67.2% vs 65.3%）
+- 差距来源：ATCNet 用 multi-head attention + dilated TCN 做了**非线性融合**，能让一个 MLP 分类头 squeeze 出更高准确率；但对一个**只能线性读取**它输出的下游模块来说，ATCNet 的表征反而更难用
+- Per-class spread 翻倍（6.9 → 12.1 pp）意味着 ATCNet 把 capacity 集中在了 2 个"容易"类别（both_fists、both_feet）上，**牺牲了 left_fist 和 right_fist 的判别力**
 
-### 阶段四 / Stage 4 — 表征学习分析
+### 3. 这如何解释 controllability 结果？
 
-| 文件 | 功能描述 |
-|------|---------|
-| `analyze_representations.py` | CKA + linear probing + 回归分析 EEG/action 表征关系 |
-| `plot_eeg_embedding_2d.py` | EEGNet embedding 按类别的 PCA + t-SNE 可视化 |
-| `compare_eeg_embeddings.py` | EEGNet 与 ATCNet 两种编码器的 embedding 对比可视化 |
+EEGNet 在 4 个类别上的表现**相对均匀**（6.9 pp spread），这给了下游 action expert 一个"4 个方向同等强度"的信号。ATCNet 虽然总体更准，但 left_fist / right_fist 的分离度比 EEGNet 差 3–5 pp — 而这两个正是 controllability 测试里 ATCNet 系统性失败的类别（在所有 ATCNet 实验 v5/v6/v8 中无一例外）。
 
-### 阶段五至八 / Stages 5–8 — Token-level 注入与编码器消融
+| Run | Encoder | Pass left_fist | Pass right_fist | Pass both_fists | Pass both_feet |
+|---|---|---|---|---|---|
+| v4 (EEGNet 3k) | EEGNet 51.6% | ✗ | ✓ | ✓ | ✓ |
+| v7 (EEGNet 5k) | EEGNet 51.6% | ✓ | ✓ | ✗ | ✗ |
+| v5 (ATCNet 3k + aux) | ATCNet 57.7% | ✗ | ✗ | ✗ | ✓ |
+| v6 (ATCNet 3k) | ATCNet 57.7% | ✗ | ✓ | ✗ | ✓ |
+| v8 (ATCNet 5k scratch) | ATCNet 57.7% | ✗ | ✓ | ✗ | ✓ |
 
-| 文件 | 功能描述 |
-|------|---------|
-| `train_smolvla_eeg_token.py` | Token-level 注入训练：把 EEG 投影到 VLM hidden_dim 作为 token-0；支持 `ENCODER_ARCH=eegnet/atcnet`、`AUX_LOSS_WEIGHT`、`NO_BASE_CKPT`、`CLASS_BAL` 等环境变量 |
-| `eval_token_eeg.py` | Token-level 模型的 controllability 评估，输出 `controllability_token_*.npz/png` |
-| `eeg_encoder_atcnet.py` | ATCNet encoder（Altaheri 2023）：EEGNet conv + multi-head attention + dilated TCN，70K 参数，val_acc 57.7% |
-| `plot_controllability_progression.py` | v1–v4 progression 图 |
-| `plot_controllability_v1_v8.py` | **全部 8 个变体**的 controllability progression 图 |
-| `run_full_pipeline.sh` | 无人值守 overnight 管线：下载 EEG → 重训 encoder → 训练 token 模型 → 评估 |
+ATCNet 实验里 left_fist 永远是 ✗，与其在 embedding 空间里的劣势完全对应。
+
+### 4. 综合诊断
+
+| 衡量维度 | EEGNet 51.6% | ATCNet 57.7% | 谁更适合 controllability |
+|---|---|---|---|
+| MI 分类准确率（MLP head） | 51.6% | **57.7%** | ATCNet 看起来更强 |
+| Linear separability (5-fold LR) | **67.2%** | 65.3% | EEGNet 略胜 |
+| Per-class spread (越小越好) | **6.9 pp** | 12.1 pp | EEGNet 明显更均匀 |
+| 弱类别（left/right_fist）的 sep | **65–69%** | 62–64% | EEGNet 明显占优 |
+| Controllability 通过数 | **3/4** (v4) | 2/4 (v6/v8) | EEGNet 胜出 |
+
+**结论**：在 multimodal fusion 架构里，编码器需要被评估的是**对下游可用的、按类均匀的判别力**，而不是任何带有非线性 head 的"准确率"。一个 67% LR + 7 pp spread 的 EEGNet 在控制性上比 65% LR + 12 pp spread 的 ATCNet 更可用。这呼应了阶段四的 CKA 分析——EEG 的有用性取决于它能不能被 action expert 在线性意义上读取出来。
 
 ---
 
-## 环境配置 / Environment setup
+## What this shows
 
-Python 3.12 + `lerobot`（源码安装）+ `libero`（PYTHONPATH注入），在 Apple MPS 上运行：
+**Eight progressive variants across four code stages**, each building on the last:
+
+### Stage 1 — Environment & baseline demos
+
+| File | What it does |
+|------|---|
+| `quick_test.py` | Sanity check — verifies imports and tensor shapes (~15 s) |
+| `demo_libero_env.py` | LIBERO sim with random policy; saves camera frames |
+| `demo_smolvla_libero.py` | SmolVLA on LIBERO with a randomly-initialised action expert |
+| `demo_smolvla_base_libero.py` | Pretrained `lerobot/smolvla_base` (SO100) cross-embodiment test |
+| `libero_smolvla_config.py` | LIBERO-specific `SmolVLAConfig` (14-dim state, 7-dim action, 2 cameras) |
+| `utils.py` | Shared helpers: `obs_to_policy_batch`, normalization, frame saving |
+
+### Stage 2 — Fine-tuning on LIBERO + adding EEG
+
+| File | What it does |
+|------|---|
+| `dataset_libero.py` | PyTorch Dataset over LIBERO HDF5 demos; computes normalization stats |
+| `train_smolvla_libero.py` | Fine-tunes action expert on LIBERO spatial (2000 steps, ~38 min on M5) |
+| `load_trained.py` | Loads any saved checkpoint for evaluation or inference |
+| `eval_openloop.py` | Open-loop action prediction accuracy vs ground-truth demos |
+| `plot_training.py` | Loss curve + LR schedule from `train_log.jsonl` |
+| `plot_eval.py` | Multi-panel comparison: random / trained (no VLM) / trained (pretrained VLM) |
+| `download_eeg_data.py` | Downloads PhysioNet EEGMMIDB via MNE; extracts 2 s bandpass-filtered epochs |
+| `eeg_encoder.py` | EEGNet: 585K-param depthwise-separable CNN → 64-dim embedding |
+| `train_eeg_encoder.py` | Pretrains EEGNet on 4-class motor imagery |
+| `train_smolvla_eeg.py` | `SmolVLAWithEEG` wrapper: additive EEG injection into the robot state |
+| `eval_openloop_eeg.py` | Evaluates all 5 EEG conditions; per-condition MAE/L2/gripper plot |
+
+### Stage 3 — Synthetic deterministic EEG-action pairing
+
+| File | What it does |
+|------|---|
+| `train_smolvla_eeg.py` (`SYNTHETIC_PAIRING=1`) | Forces EEG class to match action semantics; dropout=0 |
+| `eval_synthetic_eeg.py` | Controllability test: directional output shift per EEG condition |
+
+### Stage 4 — Representation learning analysis
+
+| File | What it does |
+|------|---|
+| `analyze_representations.py` | CKA + linear probing + regression analysis on EEG/action representations |
+| `plot_eeg_embedding_2d.py` | PCA + t-SNE visualization of EEGNet embeddings by class |
+| `compare_eeg_embeddings.py` | Side-by-side EEGNet vs ATCNet embedding comparison + per-class recall |
+
+### Stages 5–8 — Token-level VLM injection and encoder ablations
+
+| File | What it does |
+|------|---|
+| `train_smolvla_eeg_token.py` | Token-level injection trainer: projects EEG to VLM hidden_dim and inserts as token-0. Env vars: `ENCODER_ARCH=eegnet/atcnet`, `AUX_LOSS_WEIGHT`, `NO_BASE_CKPT`, `CLASS_BAL` |
+| `eval_token_eeg.py` | Controllability evaluation for token-level models; writes `controllability_token_*.npz/png` |
+| `eeg_encoder_atcnet.py` | ATCNet encoder (Altaheri 2023): EEGNet conv + multi-head attention + dilated TCN, 70K params, val_acc 57.7% |
+| `plot_controllability_progression.py` | v1–v4 progression plot |
+| `plot_controllability_v1_v8.py` | **All 8 variants** controllability progression plot |
+| `plot_atcnet_vs_eegnet.py` | Per-class EEGNet vs ATCNet comparison (the "why stronger encoder loses" plot) |
+| `run_full_pipeline.sh` | Unattended overnight pipeline: download EEG → retrain encoder → train token model → eval |
+
+---
+
+## Environment setup
+
+Python 3.12 with `lerobot` (from source) and `libero` (via PYTHONPATH), running on Apple MPS:
 
 ```bash
-conda env list   # 应该看到：lerobot, libero
+conda env list   # should show: lerobot, libero
 
-# 所有脚本运行方式 / All scripts run with:
+# All scripts run with:
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python <script.py>
 
-# EEG 管线额外需要的包 / Additional packages for EEG pipeline:
+# Additional packages needed for EEG pipeline:
 pip install mne moabb scikit-learn pymatreader
 ```
 
 ---
 
-## 快速上手 / Quickstart
+## Quickstart
 
 ```bash
 cd /Users/r/Projects/SmolVLA_cl
 
-# ── 阶段一：在 LIBERO 上训练 SmolVLA 基线 ──────────────────────────────────────
+# ── Stage 1: train baseline SmolVLA on LIBERO ────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
-# 使用预训练 VLM backbone 的变体
+# Variant with pretrained VLM backbone
 LOAD_VLM=1 RUN_NAME=libero_spatial_vlm \
     PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_libero.py
-# 评估 + 对比绘图
+# Evaluation + comparison plot
 MODEL=trained PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop.py
 /opt/anaconda3/envs/lerobot/bin/python plot_eval.py
 
-# ── 阶段二：加入 EEG 模态（随机配对，50% dropout） ──────────────────────────────
+# ── Stage 2: add EEG modality (random pairing, 50% dropout) ──────────────────
 /opt/anaconda3/envs/lerobot/bin/python download_eeg_data.py --subjects 10
 /opt/anaconda3/envs/lerobot/bin/python train_eeg_encoder.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_openloop_eeg.py
 
-# ── 阶段三：合成确定性 EEG-动作配对 + 0% dropout ──────────────────────────────
+# ── Stage 3: synthetic EEG-action pairing + 0% dropout ───────────────────────
 SYNTHETIC_PAIRING=1 PYTHONPATH=/Users/r/LIBERO \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg.py
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python eval_synthetic_eeg.py
 
-# ── 阶段四：表征学习分析 ──────────────────────────────────────────────────────
+# ── Stage 4: representation analysis ─────────────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO /opt/anaconda3/envs/lerobot/bin/python analyze_representations.py
 /opt/anaconda3/envs/lerobot/bin/python plot_eeg_embedding_2d.py
-# EEGNet 与 ATCNet embedding 对比可视化
 /opt/anaconda3/envs/lerobot/bin/python compare_eeg_embeddings.py
 
-# ── 阶段五（v2-v4）：Token-level VLM 注入 ──────────────────────────────────────
-# v2: token-level，1000 步，不平衡
+# ── Stage 5 (v2-v4): token-level VLM injection ───────────────────────────────
+# v2: token-level, 1000 steps, unbalanced
 PYTHONPATH=/Users/r/LIBERO TRAIN_STEPS=1000 \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
-# v3: 加入类别平衡 + 2000 步
+# v3: add class balancing + 2000 steps
 PYTHONPATH=/Users/r/LIBERO TRAIN_STEPS=2000 CLASS_BAL=1 RUN_NAME=libero_spatial_eeg_token_balanced \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
-# v4 ★：在 109 个 PhysioNet 受试者上重训 EEGNet 后再训 token 模型 3000 步
+# v4 ★: retrain EEGNet on 109 PhysioNet subjects, then train token model for 3000 steps
 SUBJECTS=109 /opt/anaconda3/envs/lerobot/bin/python download_eeg_data.py
 /opt/anaconda3/envs/lerobot/bin/python train_eeg_encoder.py
 PYTHONPATH=/Users/r/LIBERO TRAIN_STEPS=3000 CLASS_BAL=1 RUN_NAME=libero_spatial_eeg_token_balanced_v2 \
@@ -422,126 +476,166 @@ PYTHONPATH=/Users/r/LIBERO TRAIN_STEPS=3000 CLASS_BAL=1 RUN_NAME=libero_spatial_
 PYTHONPATH=/Users/r/LIBERO RUN_NAME=libero_spatial_eeg_token_balanced_v2 \
     /opt/anaconda3/envs/lerobot/bin/python eval_token_eeg.py
 
-# ── 阶段六（v5/v6）：ATCNet 编码器 + 辅助损失消融 ──────────────────────────────
+# ── Stage 6 (v5/v6): ATCNet encoder + aux loss ablation ──────────────────────
 /opt/anaconda3/envs/lerobot/bin/python train_eeg_encoder.py --arch atcnet
 # v5: ATCNet + aux loss 0.2
 PYTHONPATH=/Users/r/LIBERO ENCODER_ARCH=atcnet AUX_LOSS_WEIGHT=0.2 CLASS_BAL=1 TRAIN_STEPS=3000 \
     RUN_NAME=libero_spatial_eeg_token_atcnet_aux \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
-# v6: ATCNet only（no aux）
+# v6: ATCNet only (no aux)
 PYTHONPATH=/Users/r/LIBERO ENCODER_ARCH=atcnet CLASS_BAL=1 TRAIN_STEPS=3000 \
     RUN_NAME=libero_spatial_eeg_token_atcnet_only \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
 
-# ── 阶段七（v7）：EEGNet + 5000 步 ─────────────────────────────────────────────
+# ── Stage 7 (v7): EEGNet + 5000 steps ────────────────────────────────────────
 PYTHONPATH=/Users/r/LIBERO TRAIN_STEPS=5000 CLASS_BAL=1 \
     RUN_NAME=libero_spatial_eeg_token_eegnet_5000 \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
 
-# ── 阶段八（v8）：ATCNet + expert 从零训练 ────────────────────────────────────
+# ── Stage 8 (v8): ATCNet + expert from scratch ───────────────────────────────
 PYTHONPATH=/Users/r/LIBERO ENCODER_ARCH=atcnet CLASS_BAL=1 TRAIN_STEPS=5000 NO_BASE_CKPT=1 \
     RUN_NAME=libero_spatial_eeg_token_atcnet_scratch \
     /opt/anaconda3/envs/lerobot/bin/python train_smolvla_eeg_token.py
 
-# ── 生成 v1–v8 全阶段 progression 图 ───────────────────────────────────────────
+# ── Generate the v1–v8 progression plot and per-class encoder comparison ─────
 /opt/anaconda3/envs/lerobot/bin/python plot_controllability_v1_v8.py
+/opt/anaconda3/envs/lerobot/bin/python plot_atcnet_vs_eegnet.py
 ```
 
 ---
 
-## M5 MPS 性能 / Performance on M5 MPS
+## Performance on M5 MPS
 
-SmolVLA 使用 **action chunking**：一次 VLM 前向生成50个动作，每步从队列里取出一个。
+SmolVLA uses **action chunking**: one VLM forward pass generates 50 actions, executed one per step.
 
-| 阶段 | 耗时 |
+| Phase | Time |
 |---|---|
-| 首次推理 — 生成50步 chunk（预训练VLM） | ~8–12 秒 |
-| 第1–49步 — 从队列中弹出 | ~1 毫秒 |
-| 训练单步（仅 action expert，MPS） | ~0.85 秒/步 |
-| EEG encoder 推理（EEGNet，MPS） | < 1 毫秒 |
+| First inference — chunk of 50 (pretrained VLM) | ~8–12 s |
+| Steps 1–49 — pop from queue | ~1 ms |
+| Training step (action expert only, MPS) | ~0.85 s/step |
+| EEG encoder inference (EEGNet, MPS) | < 1 ms |
 
-在 M5 MPS 上完成的训练任务：
+Full training runs completed on M5 MPS:
 
-| 任务 | 步数 | 耗时 |
+| Run | Steps | Time |
 |---|---|---|
-| 阶段一 — SmolVLA，随机 VLM | 2000 | 38.4 分钟 |
-| 阶段一 — SmolVLA，预训练 VLM | 2000 | 27.3 分钟 |
-| 阶段二 — SmolVLA+EEG，随机配对 | 1000 | 24.6 分钟 |
-| 阶段三 — SmolVLA+EEG，合成配对 | 1000 | 23.4 分钟 |
-| 阶段五 (v2) — token-level 注入 | 1000 | 18.4 分钟 |
-| 阶段五 (v4 ★) — token + bal + 强 encoder | 3000 | ~52 分钟 |
-| 阶段六 (v5/v6) — ATCNet 消融 | 3000 | ~55 分钟 |
-| 阶段七 (v7) — EEGNet + 5000 步 | 5000 | ~90 分钟 |
-| 阶段八 (v8) — ATCNet + expert scratch | 5000 | ~88 分钟 |
+| Stage 1 — SmolVLA, random VLM | 2000 | 38.4 min |
+| Stage 1 — SmolVLA, pretrained VLM | 2000 | 27.3 min |
+| Stage 2 — SmolVLA+EEG, random pairing | 1000 | 24.6 min |
+| Stage 3 — SmolVLA+EEG, synthetic pairing | 1000 | 23.4 min |
+| Stage 5 (v2) — token-level injection | 1000 | 18.4 min |
+| Stage 5 (v4 ★) — token + bal + stronger encoder | 3000 | ~52 min |
+| Stage 6 (v5/v6) — ATCNet ablation | 3000 | ~55 min |
+| Stage 7 (v7) — EEGNet + 5000 steps | 5000 | ~90 min |
+| Stage 8 (v8) — ATCNet + expert from scratch | 5000 | ~88 min |
 
 ---
 
-## 输入输出维度 / Feature layout
+## Feature layout
 
-### SmolVLA（阶段一 / Stage 1）
+### SmolVLA (Stage 1)
 
 ```
-observation.images.image      (1, 3, 128, 128)  ← agentview 摄像头
-observation.images.image2     (1, 3, 128, 128)  ← 手腕摄像头
+observation.images.image      (1, 3, 128, 128)  ← agentview camera
+observation.images.image2     (1, 3, 128, 128)  ← wrist camera
 observation.state             (1, 14)           ← eef_pos(3) + eef_quat(4) + joint_pos(7)
-observation.language.tokens   (1, 48)           ← 任务描述的 token
-action output                 (50, 7)           ← chunk：delta_xyz(3) + delta_rpy(3) + gripper(1)
+observation.language.tokens   (1, 48)           ← tokenized task description
+action output                 (50, 7)           ← chunk: delta_xyz(3) + delta_rpy(3) + gripper(1)
 ```
 
-### SmolVLA+EEG（阶段二、三 / Stages 2 & 3）
+### SmolVLA+EEG (Stages 2 & 3, additive injection)
 
 ```
-observation.images.image      (1, 3, 128, 128)  ← agentview 摄像头
-observation.images.image2     (1, 3, 128, 128)  ← 手腕摄像头
-observation.state             (1, 14)           ← 机器人状态（已归一化）
-observation.language.tokens   (1, 48)           ← 任务描述 token
-observation.eeg               (1, 1, 64, 320)   ← 64通道 × 2秒 EEG @ 160 Hz  ← 新增
-action output                 (50, 7)           ← 同上
+observation.images.image      (1, 3, 128, 128)  ← agentview camera
+observation.images.image2     (1, 3, 128, 128)  ← wrist camera
+observation.state             (1, 14)           ← robot state (normalized)
+observation.language.tokens   (1, 48)           ← tokenized task description
+observation.eeg               (1, 1, 64, 320)   ← 64-ch × 2 s EEG @ 160 Hz   ← NEW
+action output                 (50, 7)           ← same as above
+```
+
+### SmolVLA+EEG (Stages 5–8, token-level injection)
+
+```
+observation.images.image      (1, 3, 128, 128)  ← agentview camera
+observation.images.image2     (1, 3, 128, 128)  ← wrist camera
+observation.state             (1, 14)           ← robot state (normalized)
+observation.language.tokens   (1, 48)           ← tokenized task description
+observation.eeg               (1, 1, 64, 320)   ← 64-ch × 2 s EEG @ 160 Hz
+eeg_token (internal)          (1, 1, 960)       ← projected to VLM hidden_dim, inserted as token-0
+action output                 (50, 7)           ← same as above
 ```
 
 ---
 
-## 架构 / Architecture
+## Architecture
 
-### SmolVLA（阶段一 / Stage 1）
+### SmolVLA (Stage 1)
 
 ```
-LIBERO 仿真环境 (robosuite/MuJoCo)
+LIBERO sim (robosuite/MuJoCo)
       │
-      ▼ agentview + 手腕摄像头帧 + 关节状态
-obs_to_policy_batch()   ← 归一化、tokenize 任务描述
+      ▼ agentview + wrist frames, joint states
+obs_to_policy_batch()   ← normalize, tokenize task language
       │
       ▼
 SmolVLAPolicy
-  ├─ SmolVLM2-500M backbone  （微调时冻结）
-  │    └─ 视觉 encoder + 语言 transformer → 上下文 token
-  └─ Flow-matching action expert  （训练，约100M参数）
-       └─ 10步去噪：噪声 → 50步动作 chunk
+  ├─ SmolVLM2-500M backbone  (frozen during fine-tuning)
+  │    └─ vision encoder + language transformer → context tokens
+  └─ Flow-matching action expert  (trained, ~100M params)
+       └─ denoises noise → 50-action chunk over 10 diffusion steps
       │
       ▼
-env.step(action[0])   ← 7-DOF 增量控制，从 chunk 弹出下一步
+env.step(action[0])   ← 7-DOF delta control, pop next from chunk
 ```
 
-### SmolVLA+EEG（阶段二、三 / Stages 2 & 3）
+### SmolVLA+EEG — additive injection (Stages 2 & 3)
 
 ```
-EEG 头戴设备 (64通道，160 Hz)
-      │ 2秒窗口
+EEG headset (64 ch, 160 Hz)
+      │ 2-second window
       ▼
-EEGNet encoder  （在 PhysioNet MI 上预训练，冻结，585K参数）
-      │ 64维运动想象 embedding
+EEGNet encoder  (pretrained on PhysioNet MI, frozen, 585K params)
+      │ 64-dim motor-imagery embedding
       ▼
-线性投影 (64 → 14，可训练，900参数)
+Linear projection  (64 → 14, trainable, 900 params)
       │
       + ──────────────────────────────────┐
       │                                   │
-机器人状态 (14维，归一化)             ← 加法注入
+robot state (14-dim, normalized)   ← added together
       │
       ▼
-SmolVLAPolicy  （与上面相同，action expert 继续训练）
+SmolVLAPolicy  (same as above, action expert continues training)
       │
       ▼
-50步动作 chunk → env.step()
+50-action chunk → env.step()
 ```
 
-EEG embedding 在进入 SmolVLA 的 state projection 层之前，被**加**到机器人状态向量上。阶段三和阶段四从实证角度证明：这种 additive injection 太浅——正确的修复方案是把 EEG 投影到 SmolVLM2 的 hidden dimension，作为额外的 token 与图像 patch、语言 token 一起送入 transformer 的 attention 层进行深度融合。
+This additive injection is too shallow — Stages 3 & 4 demonstrated empirically that the EEG signal does not propagate into action decisions through addition at the state level.
+
+### SmolVLA+EEG — token-level injection (Stages 5–8)
+
+```
+EEG headset (64 ch, 160 Hz)
+      │ 2-second window
+      ▼
+EEG encoder  (EEGNet 585K params OR ATCNet 70K params, frozen)
+      │ 64-dim embedding
+      ▼
+eeg_proj  (Linear 64 → 960, trainable, ~62K params)
+      │ 960-dim VLM hidden_dim
+      ▼
+forward hook on vlm.get_input_embeddings():
+   replaces position-0 token embedding with the EEG token
+      │
+      ▼
+SmolVLM2 transformer (frozen)  — image patches + language tokens + EEG token
+      │   all attend to one another in self-attention layers
+      ▼
+Flow-matching action expert (trained / fine-tuned)
+      │
+      ▼
+50-action chunk → env.step()
+```
+
+The fix is to project EEG into SmolVLM2's hidden dimension and feed it as an extra token through the transformer attention layers alongside image patches and language tokens. This 2× the controllability of additive injection (v1 1/4 → v2 2/4), and with retraining the encoder and balanced sampling reaches 3/4 (v4). But beyond v4, additional knobs (stronger encoder, aux loss, longer training, expert-from-scratch) all trade one passing class for another rather than improving the total.
