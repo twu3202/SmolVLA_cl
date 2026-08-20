@@ -6,6 +6,18 @@ Early-stage demonstration of [SmolVLA](https://huggingface.co/lerobot/smolvla_ba
 
 整个项目分为四个阶段，逐步增加模态、验证可控性、并从representation learning层面分析EEG模态的可行性。
 
+### 训练好的权重
+
+全部 11 个 SmolVLA checkpoint（阶段一至阶段八的 v1–v8）、3 个 EEG 编码器和归一化统计已发布在 HuggingFace：
+
+**[`Twu31/smolvla-libero-eeg`](https://huggingface.co/Twu31/smolvla-libero-eeg)**
+
+每个变体一个子目录，附训练日志和评估图表；model card 里有加载示例、变体与编码器的对应关系，以及一条本 README 未写明的重要事实 —— **v1–v7 的 VLM backbone 是随机初始化的**（它们都从 `libero_spatial` 分支而来，那一路用的是 `LOAD_VLM=0`），只有阶段一的 pretrained 变体和 v8 携带预训练的 SmolVLM2 权重。
+
+相关发布：
+[`Twu31/smolvla-cross-embodiment-mps`](https://huggingface.co/Twu31/smolvla-cross-embodiment-mps)（16 个 LeRobot 数据集上的 SmolVLA）·
+[`Twu31/rt1-lerobot-mps`](https://huggingface.co/Twu31/rt1-lerobot-mps)（RT-1 架构对照）
+
 ---
 
 ## 阶段一：LIBERO + lerobot 基础管线
